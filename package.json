@@ -17,7 +17,8 @@
 		"test:security": "node scripts/security-matrix.mjs",
 		"test:scope": "node scripts/scope-matrix.mjs",
 		"test:srs": "node scripts/srs-matrix.mjs",
-		"test:delivery": "node --experimental-strip-types scripts/delivery-matrix.mjs"
+		"test:delivery": "node --experimental-strip-types scripts/delivery-matrix.mjs",
+		"test:isolation": "node scripts/isolation-matrix.mjs"
 	},
 	"devDependencies": {
 		"@iconify-json/material-symbols": "^1.2.17",
