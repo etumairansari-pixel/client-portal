@@ -1,0 +1,38 @@
+# Dependencies
+node_modules
+
+# Nuxt / Nitro build output
+.nuxt
+.nitro
+.cache
+.output
+dist
+
+# Local runtime data (uploaded files, scratch state)
+.data
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+*.log*
+
+# Tooling caches
+.eslintcache
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store
+
+# Deployment providers
+.netlify
+.vercel
+
+# Legacy Directus stack (kept locally, not part of the app)
+.directus/data
+.directus/uploads
+directus

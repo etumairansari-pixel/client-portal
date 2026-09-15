@@ -1,0 +1,32 @@
+html {
+	scroll-behavior: smooth;
+}
+
+:target {
+	scroll-margin-top: 4rem;
+}
+
+.grain-bg {
+	background-image: url('~~/assets/img/noise.png');
+}
+
+::selection {
+	@apply bg-primary text-white;
+}
+
+/* For Webkit-based browsers (Chrome, Safari and Opera) */
+.scrollbar-hide::-webkit-scrollbar {
+	display: none;
+}
+
+/* For IE, Edge and Firefox */
+.scrollbar-hide {
+	-ms-overflow-style: none; /* IE and Edge */
+	scrollbar-width: none; /* Firefox */
+}
+
+/* Eiretech is a light-theme product: pin the base surface and text colour so
+   nothing inherits a dark default. */
+body {
+	@apply bg-white text-slate-900;
+}
