@@ -1,0 +1,735 @@
+// Eiretech Client Management & Client Portal — data model.
+//
+// Provider is MongoDB, so note two consequences that shape the code:
+//   1. There are no real foreign keys or cascading deletes. Referential
+//      integrity is enforced in the service layer (server/services/*).
+//   2. There is no `prisma migrate`; schema changes ship via `prisma db push`.
+//
+// Tenant rule: every client-readable model carries `organizationId` so a query
+// can be scoped in one predicate without a join.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------- enums
+
+enum Role {
+  OWNER
+  CLIENT
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  INVITED
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum ProjectStatus {
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  ARCHIVED
+}
+
+enum ProjectStage {
+  PLANNING
+  DESIGN
+  DEVELOPMENT
+  QA
+  CLIENT_REVIEW
+  DEPLOYMENT
+  COMPLETED
+  ON_HOLD
+}
+
+// ---------------------------------------------------------------- models
+
+model Organization {
+  id        String             @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  email     String?
+  phone     String?
+  website   String?
+  status    OrganizationStatus @default(ACTIVE)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  users    User[]
+  projects Project[]
+  scopes   Scope[]
+  srsDocuments SrsDocument[]
+  milestones     Milestone[]
+  projectTasks   ProjectTask[]
+  projectUpdates ProjectUpdate[]
+  changeRequests ChangeRequest[]
+
+  @@map("organizations")
+}
+
+model User {
+  id             String     @id @default(auto()) @map("_id") @db.ObjectId
+  email          String     @unique
+  passwordHash   String
+  firstName      String?
+  lastName       String?
+  role           Role       @default(CLIENT)
+  status         UserStatus @default(ACTIVE)
+  // OWNER has no organization. CLIENT must belong to exactly one.
+  organizationId String?    @db.ObjectId
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  // Forces a password change on next login (used for temporary passwords).
+  mustChangePassword Boolean @default(false)
+  lastLoginAt    DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  sessions      Session[]
+  resetTokens   PasswordResetToken[]
+  auditLogs     AuditLog[]
+
+  @@index([organizationId])
+  @@map("users")
+}
+
+model Session {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  // Only the SHA-256 hash of the session token is stored, so a database
+  // leak cannot be replayed as a login.
+  tokenHash String   @unique
+  userId    String   @db.ObjectId
+  user      User     @relation(fields: [userId], references: [id])
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  tokenHash String    @unique
+  userId    String    @db.ObjectId
+  user      User      @relation(fields: [userId], references: [id])
+  expiresAt DateTime
+  // Single-use: set the moment the token is redeemed.
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model Project {
+  id             String        @id @default(auto()) @map("_id") @db.ObjectId
+  organizationId String        @db.ObjectId
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  name           String
+  description    String?
+  status         ProjectStatus @default(ACTIVE)
+  currentStage   ProjectStage  @default(PLANNING)
+  startDate      DateTime?
+  targetDate     DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  scopes Scope[]
+  srsDocuments SrsDocument[]
+
+  // Set once Scope AND Requirements are both approved. Delivery has not
+  // started at this point - it only means the project is cleared to plan.
+  readyForDeliveryAt DateTime?
+
+  // Owner-controlled delivery health. Never inferred automatically.
+  health        ProjectHealth @default(ON_TRACK)
+  // Optional client-visible explanation, mainly when BLOCKED.
+  healthReason  String?
+
+  milestones     Milestone[]
+  tasks          ProjectTask[]
+  updates        ProjectUpdate[]
+  changeRequests ChangeRequest[]
+
+  @@index([organizationId])
+  @@map("projects")
+}
+
+model AuditLog {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  actorUserId String?  @db.ObjectId
+  actor       User?    @relation(fields: [actorUserId], references: [id])
+  action      String
+  entityType  String?
+  entityId    String?
+  // Never store passwords, tokens or secrets here.
+  metadata    Json?
+  ip          String?
+  createdAt   DateTime @default(now())
+
+  @@index([actorUserId])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------- scope
+
+enum ScopeStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  CLARIFICATION_REQUIRED
+  READY_FOR_APPROVAL
+  APPROVED
+}
+
+enum ScopeMessageAuthor {
+  EIRETECH
+  CLIENT
+}
+
+enum DiscussionStatus {
+  OPEN
+  RESOLVED
+}
+
+model Scope {
+  id             String       @id @default(auto()) @map("_id") @db.ObjectId
+  organizationId String       @db.ObjectId
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  projectId      String?      @db.ObjectId
+  project        Project?     @relation(fields: [projectId], references: [id])
+
+  status         ScopeStatus  @default(DRAFT)
+  // Working draft. Snapshotted into ScopeVersion on every submission.
+  answers        Json?
+  completionPercentage Int    @default(0)
+  currentVersion Int          @default(0)
+
+  createdById    String?      @db.ObjectId
+  lastSavedAt    DateTime?
+  submittedAt    DateTime?
+  reviewStartedAt DateTime?
+  readyForApprovalAt DateTime?
+  clientApprovedAt DateTime?
+  approvedAt     DateTime?
+  // Set when the scope becomes immutable.
+  lockedAt       DateTime?
+  approvedById   String?      @db.ObjectId
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  versions    ScopeVersion[]
+  files       ScopeFile[]
+  discussions ScopeDiscussion[]
+  approvals   ScopeApproval[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@map("scopes")
+}
+
+model ScopeVersion {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  scopeId        String   @db.ObjectId
+  scope          Scope    @relation(fields: [scopeId], references: [id])
+  // Denormalised so ownership is checkable without a join.
+  organizationId String   @db.ObjectId
+  versionNumber  Int
+  // Frozen at submission. Never updated.
+  answers        Json?
+  submittedById  String?  @db.ObjectId
+  submittedAt    DateTime @default(now())
+
+  @@index([scopeId])
+  @@index([organizationId])
+  @@map("scope_versions")
+}
+
+model ScopeFile {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  scopeId        String   @db.ObjectId
+  scope          Scope    @relation(fields: [scopeId], references: [id])
+  organizationId String   @db.ObjectId
+  // Random on-disk name; never derived from the original filename.
+  storageKey     String   @unique
+  originalName   String
+  mimeType       String
+  sizeBytes      Int
+  sectionKey     String?
+  questionKey    String?
+  uploadedById   String?  @db.ObjectId
+  createdAt      DateTime @default(now())
+
+  @@index([scopeId])
+  @@index([organizationId])
+  @@map("scope_files")
+}
+
+model ScopeDiscussion {
+  id             String           @id @default(auto()) @map("_id") @db.ObjectId
+  scopeId        String           @db.ObjectId
+  scope          Scope            @relation(fields: [scopeId], references: [id])
+  organizationId String           @db.ObjectId
+  // Optional anchor so a clarification can point at one question.
+  sectionKey     String?
+  questionKey    String?
+  subject        String
+  status         DiscussionStatus @default(OPEN)
+  // True when this thread is blocking the client (CLARIFICATION_REQUIRED).
+  requiresClientResponse Boolean  @default(true)
+  openedById     String?          @db.ObjectId
+  resolvedAt     DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  messages ScopeMessage[]
+
+  @@index([scopeId])
+  @@index([organizationId])
+  @@map("scope_discussions")
+}
+
+model ScopeMessage {
+  id             String             @id @default(auto()) @map("_id") @db.ObjectId
+  discussionId   String             @db.ObjectId
+  discussion     ScopeDiscussion    @relation(fields: [discussionId], references: [id])
+  organizationId String             @db.ObjectId
+  // Clients only ever see "Eiretech" or "Client" - never an employee name.
+  authorSide     ScopeMessageAuthor
+  authorUserId   String?            @db.ObjectId
+  body           String
+  createdAt      DateTime           @default(now())
+
+  @@index([discussionId])
+  @@index([organizationId])
+  @@map("scope_messages")
+}
+
+model ScopeApproval {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  scopeId        String   @db.ObjectId
+  scope          Scope    @relation(fields: [scopeId], references: [id])
+  organizationId String   @db.ObjectId
+  versionNumber  Int
+  // The client agreement, then the owner's final confirmation.
+  clientApprovedById String? @db.ObjectId
+  clientApprovedAt   DateTime?
+  ownerApprovedById  String? @db.ObjectId
+  ownerApprovedAt    DateTime?
+  clientStatement    String?
+  createdAt      DateTime @default(now())
+
+  @@index([scopeId])
+  @@index([organizationId])
+  @@map("scope_approvals")
+}
+
+model Notification {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  // Recipient user. Owner notifications have no organizationId.
+  userId         String   @db.ObjectId
+  organizationId String?  @db.ObjectId
+  type           String
+  title          String
+  body           String?
+  link           String?
+  readAt         DateTime?
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+  @@map("notifications")
+}
+
+// ------------------------------------------------- requirements / SRS
+
+enum SrsStatus {
+  DRAFT
+  INTERNAL_REVIEW
+  CLIENT_REVIEW
+  CHANGES_REQUESTED
+  READY_FOR_APPROVAL
+  APPROVED
+}
+
+enum RequirementKind {
+  FR // functional
+  NFR // non-functional
+}
+
+enum RequirementPriority {
+  MUST_HAVE
+  SHOULD_HAVE
+  COULD_HAVE
+  WONT_HAVE
+}
+
+enum RequirementState {
+  DRAFT
+  CONFIRMED
+  REMOVED
+}
+
+model SrsDocument {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  organizationId String    @db.ObjectId
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  projectId      String    @db.ObjectId
+  project        Project   @relation(fields: [projectId], references: [id])
+  // The approved Scope this document was authored against (reference material).
+  scopeId        String?   @db.ObjectId
+
+  title          String    @default("Software Requirements Specification")
+  status         SrsStatus @default(DRAFT)
+  // Working draft body: { sectionKey: markdown }. Snapshotted per version.
+  content        Json?
+  currentVersion Int       @default(0)
+
+  createdById    String?   @db.ObjectId
+  submittedForReviewAt DateTime?
+  readyForApprovalAt   DateTime?
+  clientApprovedAt     DateTime?
+  approvedAt     DateTime?
+  approvedById   String?   @db.ObjectId
+  lockedAt       DateTime?
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  versions     SrsVersion[]
+  requirements SrsRequirement[]
+  discussions  RequirementDiscussion[]
+  approvals    RequirementApproval[]
+  attachments  SrsAttachment[]
+
+  @@index([organizationId])
+  @@index([projectId])
+  @@map("srs_documents")
+}
+
+model SrsVersion {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  srsDocumentId  String   @db.ObjectId
+  srsDocument    SrsDocument @relation(fields: [srsDocumentId], references: [id])
+  organizationId String   @db.ObjectId
+  // "1.0", "1.1" — a version already sent to the client is never overwritten.
+  versionLabel   String
+  versionNumber  Int
+  title          String
+  // Frozen snapshot of both the narrative sections and the requirement list.
+  content        Json?
+  requirements   Json?
+  createdById    String?  @db.ObjectId
+  sentAt         DateTime?
+  createdAt      DateTime @default(now())
+
+  @@index([srsDocumentId])
+  @@index([organizationId])
+  @@map("srs_versions")
+}
+
+model SrsRequirement {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  srsDocumentId  String   @db.ObjectId
+  srsDocument    SrsDocument @relation(fields: [srsDocumentId], references: [id])
+  organizationId String   @db.ObjectId
+  // Stable human reference, e.g. FR-001. Never reused or renumbered.
+  ref            String
+  kind           RequirementKind     @default(FR)
+  title          String
+  description    String?
+  module         String?
+  priority       RequirementPriority @default(MUST_HAVE)
+  state          RequirementState    @default(DRAFT)
+  acceptanceCriteria String?
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([srsDocumentId])
+  @@index([organizationId])
+  @@map("srs_requirements")
+}
+
+model SrsAttachment {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  srsDocumentId  String   @db.ObjectId
+  srsDocument    SrsDocument @relation(fields: [srsDocumentId], references: [id])
+  organizationId String   @db.ObjectId
+  storageKey     String   @unique
+  originalName   String
+  mimeType       String
+  sizeBytes      Int
+  uploadedById   String?  @db.ObjectId
+  createdAt      DateTime @default(now())
+
+  @@index([srsDocumentId])
+  @@index([organizationId])
+  @@map("srs_attachments")
+}
+
+model RequirementDiscussion {
+  id             String           @id @default(auto()) @map("_id") @db.ObjectId
+  srsDocumentId  String           @db.ObjectId
+  srsDocument    SrsDocument      @relation(fields: [srsDocumentId], references: [id])
+  organizationId String           @db.ObjectId
+  // Anchor: whole document, a section, or one requirement.
+  sectionKey     String?
+  requirementRef String?
+  subject        String
+  status         DiscussionStatus @default(OPEN)
+  openedSide     ScopeMessageAuthor @default(CLIENT)
+  openedById     String?          @db.ObjectId
+  resolvedAt     DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  messages RequirementMessage[]
+
+  @@index([srsDocumentId])
+  @@index([organizationId])
+  @@map("requirement_discussions")
+}
+
+model RequirementMessage {
+  id             String             @id @default(auto()) @map("_id") @db.ObjectId
+  discussionId   String             @db.ObjectId
+  discussion     RequirementDiscussion @relation(fields: [discussionId], references: [id])
+  organizationId String             @db.ObjectId
+  authorSide     ScopeMessageAuthor
+  authorUserId   String?            @db.ObjectId
+  body           String
+  createdAt      DateTime           @default(now())
+
+  @@index([discussionId])
+  @@index([organizationId])
+  @@map("requirement_messages")
+}
+
+model RequirementApproval {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  srsDocumentId  String   @db.ObjectId
+  srsDocument    SrsDocument @relation(fields: [srsDocumentId], references: [id])
+  organizationId String   @db.ObjectId
+  versionLabel   String
+  clientApprovedById String? @db.ObjectId
+  clientApprovedAt   DateTime?
+  ownerApprovedById  String? @db.ObjectId
+  ownerApprovedAt    DateTime?
+  clientStatement    String?
+  createdAt      DateTime @default(now())
+
+  @@index([srsDocumentId])
+  @@index([organizationId])
+  @@map("requirement_approvals")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5: delivery workspace
+// ---------------------------------------------------------------------------
+
+enum ProjectHealth {
+  ON_TRACK
+  AT_RISK
+  BLOCKED
+}
+
+enum MilestoneStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  UNDER_REVIEW
+  BLOCKED
+  COMPLETED
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  UNDER_REVIEW
+  BLOCKED
+  COMPLETED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+// Functional teams are labels for the client, NOT employee roles.
+enum FunctionalTeam {
+  PROJECT_MANAGEMENT
+  DEVELOPMENT
+  DESIGN
+  QA
+  SUPPORT
+}
+
+enum ChangeRequestType {
+  CHANGE_REQUEST
+  NEW_FEATURE
+  BUG
+  CONTENT_UPDATE
+  SUPPORT
+}
+
+enum ChangeRequestStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  CLARIFICATION_REQUIRED
+  ACCEPTED
+  DECLINED
+  IN_PROGRESS
+  COMPLETED
+}
+
+model Milestone {
+  id             String          @id @default(auto()) @map("_id") @db.ObjectId
+  organizationId String          @db.ObjectId
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  projectId      String          @db.ObjectId
+  project        Project         @relation(fields: [projectId], references: [id])
+  title          String
+  description    String?
+  status         MilestoneStatus @default(NOT_STARTED)
+  progressPercentage Int         @default(0)
+  weight         Int             @default(1)
+  startDate      DateTime?
+  dueDate        DateTime?
+  clientVisible  Boolean         @default(true)
+  blockedReason  String?
+  sortOrder      Int             @default(0)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  tasks          ProjectTask[]
+  updates        ProjectUpdate[]
+  changeRequests ChangeRequest[]
+
+  @@index([projectId])
+  @@index([organizationId])
+  @@map("milestones")
+}
+
+// No assignee / employee fields by design. If staff assignment is ever added it
+// must live on a separate internal model that client payloads never touch.
+model ProjectTask {
+  id             String         @id @default(auto()) @map("_id") @db.ObjectId
+  organizationId String         @db.ObjectId
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  projectId      String         @db.ObjectId
+  project        Project        @relation(fields: [projectId], references: [id])
+  milestoneId    String?        @db.ObjectId
+  milestone      Milestone?     @relation(fields: [milestoneId], references: [id])
+  title          String
+  description    String?
+  status         TaskStatus     @default(TODO)
+  progressPercentage Int        @default(0)
+  priority       TaskPriority   @default(MEDIUM)
+  functionalTeam FunctionalTeam @default(DEVELOPMENT)
+  clientVisible  Boolean        @default(false)
+  startDate      DateTime?
+  dueDate        DateTime?
+  blockedReason  String?
+  sortOrder      Int            @default(0)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([projectId])
+  @@index([organizationId])
+  @@map("project_tasks")
+}
+
+model ProjectUpdate {
+  id             String       @id @default(auto()) @map("_id") @db.ObjectId
+  organizationId String       @db.ObjectId
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  projectId      String       @db.ObjectId
+  project        Project      @relation(fields: [projectId], references: [id])
+  milestoneId    String?      @db.ObjectId
+  milestone      Milestone?   @relation(fields: [milestoneId], references: [id])
+  title          String
+  message        String
+  clientVisible  Boolean      @default(true)
+  // Internal bookkeeping only; never returned to clients.
+  postedById     String?      @db.ObjectId
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([projectId])
+  @@map("project_updates")
+}
+
+model ChangeRequest {
+  id                 String              @id @default(auto()) @map("_id") @db.ObjectId
+  organizationId     String              @db.ObjectId
+  organization       Organization        @relation(fields: [organizationId], references: [id])
+  projectId          String              @db.ObjectId
+  project            Project             @relation(fields: [projectId], references: [id])
+  createdById        String?             @db.ObjectId
+  createdBySide      ScopeMessageAuthor  @default(CLIENT)
+  type               ChangeRequestType   @default(CHANGE_REQUEST)
+  title              String
+  description        String
+  priority           TaskPriority        @default(MEDIUM)
+  status             ChangeRequestStatus @default(SUBMITTED)
+  relatedMilestoneId String?             @db.ObjectId
+  relatedMilestone   Milestone?          @relation(fields: [relatedMilestoneId], references: [id])
+  // Client-visible outcome note (decline reason, completion note).
+  resolutionNote     String?
+  resolvedAt         DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  messages    ChangeRequestMessage[]
+  attachments ChangeRequestAttachment[]
+
+  @@index([projectId])
+  @@index([organizationId])
+  @@map("change_requests")
+}
+
+model ChangeRequestMessage {
+  id              String             @id @default(auto()) @map("_id") @db.ObjectId
+  changeRequestId String             @db.ObjectId
+  changeRequest   ChangeRequest      @relation(fields: [changeRequestId], references: [id])
+  organizationId  String             @db.ObjectId
+  authorSide      ScopeMessageAuthor
+  // Internal only; stripped from client payloads.
+  authorUserId    String?            @db.ObjectId
+  body            String
+  createdAt       DateTime           @default(now())
+
+  @@index([changeRequestId])
+  @@map("change_request_messages")
+}
+
+model ChangeRequestAttachment {
+  id              String        @id @default(auto()) @map("_id") @db.ObjectId
+  changeRequestId String        @db.ObjectId
+  changeRequest   ChangeRequest @relation(fields: [changeRequestId], references: [id])
+  organizationId  String        @db.ObjectId
+  storageKey      String        @unique
+  originalName    String
+  mimeType        String
+  sizeBytes       Int
+  uploadedById    String?       @db.ObjectId
+  createdAt       DateTime      @default(now())
+
+  @@index([changeRequestId])
+  @@map("change_request_attachments")
+}
