@@ -31,8 +31,3 @@ dist
 # Deployment providers
 .netlify
 .vercel
-
-# Legacy Directus stack (kept locally, not part of the app)
-.directus/data
-.directus/uploads
-directus
