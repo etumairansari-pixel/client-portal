@@ -10,8 +10,7 @@ const shown = computed(() => {
 	if (!q) return organizations.value;
 	return organizations.value.filter(
 		(o: any) =>
-			o.name.toLowerCase().includes(q) ||
-			(o.users ?? []).some((u: any) => (u.email ?? '').toLowerCase().includes(q)),
+			o.name.toLowerCase().includes(q) || (o.users ?? []).some((u: any) => (u.email ?? '').toLowerCase().includes(q)),
 	);
 });
 
@@ -53,10 +52,7 @@ async function setStatus(id: string, status: 'ACTIVE' | 'SUSPENDED') {
 			<ul v-else-if="shown.length" class="divide-y divide-slate-100">
 				<li v-for="org in shown" :key="org.id" class="flex flex-wrap items-center gap-3 px-5 py-4">
 					<div class="min-w-0 grow">
-						<NuxtLink
-							:to="`/admin/clients/${org.id}`"
-							class="text-sm font-semibold text-slate-900 hover:text-blue-700"
-						>
+						<NuxtLink :to="`/admin/clients/${org.id}`" class="text-sm font-semibold text-slate-900 hover:text-blue-700">
 							{{ org.name }}
 						</NuxtLink>
 						<p class="mt-0.5 text-xs text-slate-500">

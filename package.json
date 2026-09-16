@@ -1,5 +1,6 @@
 {
 	"private": true,
+	"type": "module",
 	"scripts": {
 		"build": "nuxt build",
 		"dev": "nuxt dev",
@@ -8,7 +9,7 @@
 		"preview": "nuxt preview",
 		"postinstall": "prisma generate && nuxt prepare",
 		"typecheck": "nuxt typecheck",
-		"lint": "eslint --cache .",
+		"lint": "eslint .",
 		"format": "prettier --write \"**/*.{md,y?(a)ml,json,vue}\"",
 		"db:push": "prisma db push",
 		"db:generate": "prisma generate",
@@ -18,29 +19,38 @@
 		"test:scope": "node scripts/scope-matrix.mjs",
 		"test:srs": "node scripts/srs-matrix.mjs",
 		"test:delivery": "node --experimental-strip-types scripts/delivery-matrix.mjs",
-		"test:isolation": "node scripts/isolation-matrix.mjs"
+		"test:isolation": "node scripts/isolation-matrix.mjs",
+		"lint:fix": "eslint . --fix",
+		"test:production": "node scripts/production-matrix.mjs",
+		"test:unit": "node --experimental-strip-types --test \"scripts/unit/*.test.mjs\"",
+		"test:all": "pnpm test:unit && pnpm test:security && pnpm test:scope && pnpm test:srs && pnpm test:delivery && pnpm test:isolation && pnpm test:production",
+		"bootstrap:owner": "node scripts/bootstrap-owner.mjs",
+		"purge:dev-data": "node scripts/purge-dev-data.mjs"
 	},
 	"devDependencies": {
+		"@eslint/js": "^9.23.0",
 		"@iconify-json/material-symbols": "^1.2.17",
 		"@iconify-json/mdi": "^1.2.3",
-		"@nuxtjs/eslint-config-typescript": "^12.1.0",
-		"@nuxtjs/eslint-module": "^4.1.0",
 		"@nuxtjs/tailwindcss": "^6.13.2",
 		"@tailwindcss/forms": "^0.5.10",
 		"@tailwindcss/typography": "^0.5.16",
+		"@types/node": "22",
+		"@types/nodemailer": "^8.0.2",
 		"@types/uuid": "^10.0.0",
 		"@vueuse/core": "^13.0.0",
 		"@vueuse/nuxt": "^13.0.0",
 		"eslint": "9.23.0",
 		"eslint-config-prettier": "^10.1.1",
-		"eslint-plugin-prettier": "^5.2.5",
 		"eslint-plugin-vue": "^10.0.0",
+		"globals": "^17.12.0",
 		"prettier": "^3.5.3",
 		"prisma": "6.19.3",
 		"typescript": "^5.8.2",
+		"typescript-eslint": "8",
 		"vue-tsc": "^2.2.8"
 	},
 	"dependencies": {
+		"@aws-sdk/client-s3": "^3.1133.0",
 		"@formkit/auto-animate": "^0.8.2",
 		"@headlessui/vue": "^1.7.23",
 		"@node-rs/argon2": "^2.2.1",
@@ -54,6 +64,7 @@
 		"@vueuse/motion": "^3.0.3",
 		"micromark": "^4.0.2",
 		"micromark-extension-gfm": "^3.0.0",
+		"nodemailer": "^10.0.10",
 		"nuxt": "^3.16.1",
 		"uuid": "^11.1.0",
 		"v-perfect-signature": "^1.4.0",
@@ -62,7 +73,7 @@
 	},
 	"packageManager": "pnpm@9.6.0",
 	"engines": {
-		"node": ">=18.0.0",
-		"pnpm": ">=8.6.0"
+		"node": ">=22.6.0",
+		"pnpm": ">=9.0.0"
 	}
 }

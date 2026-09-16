@@ -118,9 +118,6 @@ function fmtDate(v?: string | null) {
 	if (!v) return null;
 	return new Date(v).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
-function fmtShort(v?: string | null) {
-	return v ? new Date(v).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '';
-}
 function fmtSize(n: number) {
 	return n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(n / 1024)} KB`;
 }

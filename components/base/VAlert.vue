@@ -1,6 +1,6 @@
 <script setup lang="ts">
 interface AlertProps {
-	type: 'info' | 'success' | 'warning' | 'error';
+	type?: 'info' | 'success' | 'warning' | 'error';
 }
 
 const iconMap = {

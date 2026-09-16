@@ -52,6 +52,18 @@ export default defineNuxtConfig({
 
 	devtools: { enabled: true },
 
+	// Runtime data (uploads, the dev mail outbox) is not source; keep the dev
+	// watcher off it so writes never trigger rebuilds.
+	ignore: ['.data/**'],
+	watch: [],
+
+	typescript: {
+		// Server modules import each other with explicit `.ts` extensions so the
+		// same files run unbundled under `node --experimental-strip-types` in the
+		// unit tests. Type-checking is noEmit, so this is allowed.
+		tsConfig: { compilerOptions: { allowImportingTsExtensions: true } },
+	},
+
 	// Eiretech is a light-theme product; light is forced so the app never
 	// renders in a half-styled dark state.
 	colorMode: {

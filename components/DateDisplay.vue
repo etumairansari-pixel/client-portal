@@ -4,11 +4,11 @@
 */
 export interface DateDisplayProps {
 	date: string | null;
-	size: 'xs' | 'sm' | 'md' | 'lg';
+	size?: 'xs' | 'sm' | 'md' | 'lg';
 	color?: 'primary' | 'gray' | 'amber';
 }
 
-const props = withDefaults(defineProps<DateDisplayProps>(), {
+withDefaults(defineProps<DateDisplayProps>(), {
 	size: 'md',
 	color: 'primary',
 });

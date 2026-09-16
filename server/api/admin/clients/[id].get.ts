@@ -11,7 +11,15 @@ export default defineEventHandler(async (event) => {
 		include: {
 			users: {
 				where: { role: 'CLIENT' },
-				select: { id: true, email: true, firstName: true, lastName: true, status: true, lastLoginAt: true, mustChangePassword: true },
+				select: {
+					id: true,
+					email: true,
+					firstName: true,
+					lastName: true,
+					status: true,
+					lastLoginAt: true,
+					mustChangePassword: true,
+				},
 			},
 			projects: { orderBy: { createdAt: 'desc' } },
 		},
