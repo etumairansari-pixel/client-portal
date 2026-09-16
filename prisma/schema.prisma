@@ -125,6 +125,9 @@ model PasswordResetToken {
   userId    String    @db.ObjectId
   user      User      @relation(fields: [userId], references: [id])
   expiresAt DateTime
+  // RESET (forgot password, 1h) or INVITE (account activation, 72h).
+  // Optional so documents written before the field existed still read.
+  purpose   String?
   // Single-use: set the moment the token is redeemed.
   usedAt    DateTime?
   createdAt DateTime  @default(now())

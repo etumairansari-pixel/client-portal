@@ -1,12 +1,13 @@
 <script setup lang="ts">
 definePageMeta({ layout: 'auth' });
-useHead({ title: 'Choose a new password' });
-
 const route = useRoute();
 const { resetPassword } = useAuth();
 
-// The reset link carries ?token=...
+// The reset link carries ?token=...; an invitation adds &welcome=1 so the
+// same page reads as account activation rather than a reset.
 const token = computed(() => (route.query.token as string | undefined) ?? '');
+const welcome = computed(() => route.query.welcome === '1');
+useHead({ title: () => (welcome.value ? 'Set your password' : 'Choose a new password') });
 
 const password = ref('');
 const confirm = ref('');
@@ -37,8 +38,13 @@ async function onSubmit() {
 <template>
 	<div v-auto-animate class="space-y-6">
 		<div class="space-y-1.5">
-			<h1 class="text-xl font-bold tracking-tight font-display text-slate-900">Choose a new password</h1>
-			<p class="text-sm text-slate-500">Your new password must be at least 8 characters.</p>
+			<h1 class="text-xl font-bold tracking-tight font-display text-slate-900">
+				{{ welcome ? 'Welcome — set your password' : 'Choose a new password' }}
+			</h1>
+			<p class="text-sm text-slate-500">
+				{{ welcome ? 'Choose the password you will use to sign in to your Eiretech client portal. ' : '' }}It must be at
+				least 8 characters.
+			</p>
 		</div>
 
 		<UAlert
@@ -46,7 +52,7 @@ async function onSubmit() {
 			color="blue"
 			variant="subtle"
 			icon="material-symbols:check-circle-outline-rounded"
-			title="Password updated"
+			:title="welcome ? 'Account activated' : 'Password updated'"
 			description="You can now sign in with your new password."
 		/>
 
@@ -55,8 +61,12 @@ async function onSubmit() {
 			color="rose"
 			variant="outline"
 			icon="material-symbols:warning-outline-rounded"
-			title="Missing reset token"
-			description="Open the link from your reset email, or request a new one."
+			:title="welcome ? 'Missing activation token' : 'Missing reset token'"
+			:description="
+				welcome
+					? 'Open the link from your invitation email, or ask Eiretech for a new one.'
+					: 'Open the link from your reset email, or request a new one.'
+			"
 		/>
 
 		<template v-else>
@@ -71,10 +81,22 @@ async function onSubmit() {
 
 			<form class="grid gap-4" @submit.prevent="onSubmit">
 				<UFormGroup label="New password" required>
-					<UInput v-model="password" type="password" size="lg" placeholder="At least 8 characters" :disabled="loading" />
+					<UInput
+						v-model="password"
+						type="password"
+						size="lg"
+						placeholder="At least 8 characters"
+						:disabled="loading"
+					/>
 				</UFormGroup>
 				<UFormGroup label="Confirm new password" required :error="mismatch && 'Passwords do not match'">
-					<UInput v-model="confirm" type="password" size="lg" placeholder="Re-enter your password" :disabled="loading" />
+					<UInput
+						v-model="confirm"
+						type="password"
+						size="lg"
+						placeholder="Re-enter your password"
+						:disabled="loading"
+					/>
 				</UFormGroup>
 				<UButton type="submit" size="lg" block label="Update password" :loading="loading" :disabled="!canSubmit" />
 			</form>

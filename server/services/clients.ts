@@ -1,8 +1,15 @@
 import type { H3Event } from 'h3';
 import { prisma } from '../utils/prisma';
-import { generateTemporaryPassword, hashPassword, revokeAllSessions } from '../utils/auth';
+import {
+	createInvitationToken,
+	generateUnusablePassword,
+	hashPassword,
+	revokeAllSessions,
+	INVITE_TTL_HOURS,
+} from '../utils/auth';
+import { getEnv } from '../utils/env';
 import { recordAudit } from './audit';
-import { sendClientWelcomeEmail } from './mail';
+import { invitationLink, sendClientInvitationEmail } from './mail';
 
 export interface CreateClientInput {
 	organizationName: string;
@@ -13,10 +20,40 @@ export interface CreateClientInput {
 	website?: string | null;
 }
 
+export interface Invitation {
+	/** True when a real mail transport accepted the message. */
+	delivered: boolean;
+	expiresAt: Date;
+	/**
+	 * Present only when mail is not configured, so the Owner can hand the
+	 * activation link over by another channel. Never returned when the email
+	 * was actually sent.
+	 */
+	setupLink?: string;
+}
+
 /**
- * Creates the Organization + CLIENT user in one step and returns a temporary
- * password ONCE. Only the hash is persisted — the plaintext is never stored,
- * logged, or recoverable afterwards.
+ * Issues a fresh single-use activation link and emails it. No password ever
+ * leaves the server: the account is unusable until the client redeems the
+ * link and chooses their own.
+ */
+async function invite(
+	user: { id: string; email: string; firstName: string | null },
+	organizationName: string,
+): Promise<Invitation> {
+	const token = await createInvitationToken(user.id);
+	const expiresAt = new Date(Date.now() + INVITE_TTL_HOURS * 3600 * 1000);
+	const { delivered } = await sendClientInvitationEmail(user, token, organizationName, INVITE_TTL_HOURS);
+	const invitation: Invitation = { delivered, expiresAt };
+	if (!getEnv().mailEnabled) invitation.setupLink = invitationLink(token);
+	return invitation;
+}
+
+/**
+ * Creates the Organization + CLIENT user in one step and sends the client an
+ * invitation to set their own password. The account is created with an
+ * unusable random password, so nothing can sign in until the invitation is
+ * redeemed.
  *
  * MongoDB has no cross-document transactions here, so on failure to create the
  * user we roll the organization back by hand.
@@ -38,14 +75,12 @@ export async function createClient(event: H3Event, actorId: string, input: Creat
 		},
 	});
 
-	const temporaryPassword = generateTemporaryPassword();
-
 	let user;
 	try {
 		user = await prisma.user.create({
 			data: {
 				email,
-				passwordHash: await hashPassword(temporaryPassword),
+				passwordHash: await hashPassword(generateUnusablePassword()),
 				firstName: input.firstName.trim(),
 				lastName: input.lastName.trim(),
 				role: 'CLIENT',
@@ -59,41 +94,47 @@ export async function createClient(event: H3Event, actorId: string, input: Creat
 		throw error;
 	}
 
-	await sendClientWelcomeEmail(email, temporaryPassword);
+	const invitation = await invite(user, organization.name);
 	await recordAudit(event, {
 		actorUserId: actorId,
 		action: 'CLIENT_CREATED',
 		entityType: 'organization',
 		entityId: organization.id,
-		metadata: { organizationName: organization.name, userEmail: email },
+		metadata: { organizationName: organization.name, userEmail: email, invitationDelivered: invitation.delivered },
 	});
 
-	return { organization, user, temporaryPassword };
+	return { organization, user, invitation };
 }
 
-/** Issues a fresh temporary password and kills every existing session. */
+/**
+ * Locks the account (unusable password, every session revoked) and sends a
+ * fresh invitation. Used when a client has lost access or never activated.
+ */
 export async function resetClientAccess(event: H3Event, actorId: string, userId: string) {
-	const user = await prisma.user.findUnique({ where: { id: userId } });
+	const user = await prisma.user.findUnique({
+		where: { id: userId },
+		include: { organization: { select: { name: true } } },
+	});
 	if (!user || user.role !== 'CLIENT') {
 		throw createError({ statusCode: 404, statusMessage: 'Client not found' });
 	}
 
-	const temporaryPassword = generateTemporaryPassword();
 	await prisma.user.update({
 		where: { id: userId },
-		data: { passwordHash: await hashPassword(temporaryPassword), mustChangePassword: true },
+		data: { passwordHash: await hashPassword(generateUnusablePassword()), mustChangePassword: true },
 	});
 	await revokeAllSessions(userId);
+	const invitation = await invite(user, user.organization?.name ?? 'your organisation');
 
 	await recordAudit(event, {
 		actorUserId: actorId,
 		action: 'CLIENT_ACCESS_RESET',
 		entityType: 'user',
 		entityId: userId,
-		metadata: { userEmail: user.email },
+		metadata: { userEmail: user.email, invitationDelivered: invitation.delivered },
 	});
 
-	return { temporaryPassword };
+	return { invitation };
 }
 
 export async function setClientStatus(

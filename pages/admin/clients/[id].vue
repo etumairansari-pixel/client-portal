@@ -10,7 +10,12 @@ const projects = computed(() => organization.value?.projects ?? []);
 useHead({ title: () => organization.value?.name ?? 'Client' });
 
 const busy = ref(false);
-const resetResult = ref<{ email: string; temporaryPassword: string } | null>(null);
+interface Invitation {
+	delivered: boolean;
+	expiresAt: string;
+	setupLink?: string;
+}
+const resetResult = ref<{ email: string; invitation: Invitation } | null>(null);
 const error = ref<string | null>(null);
 
 async function setStatus(status: 'ACTIVE' | 'SUSPENDED') {
@@ -32,7 +37,7 @@ async function resetAccess() {
 	try {
 		// Typed explicitly: the template-literal URL otherwise makes Nuxt's
 		// generated route union exceed TypeScript's instantiation depth.
-		resetResult.value = await $fetch<{ email: string; temporaryPassword: string }>(
+		resetResult.value = await $fetch<{ email: string; invitation: Invitation }>(
 			`/api/admin/clients/${id}/reset-access` as string,
 			{ method: 'POST' },
 		);
@@ -83,12 +88,23 @@ function formatDate(value?: string | null) {
 		<VAlert v-if="error" type="error">{{ error }}</VAlert>
 
 		<section v-if="resetResult" class="p-5 bg-white border shadow-sm border-slate-200 rounded-panel">
-			<h2 class="text-sm font-semibold text-slate-900">New temporary password</h2>
+			<h2 class="text-sm font-semibold text-slate-900">Access reset</h2>
 			<p class="mt-1 text-sm text-slate-500">
-				Shown once. All existing sessions for {{ resetResult.email }} have been signed out.
+				The previous password no longer works and all sessions for {{ resetResult.email }} have been signed out.
+				<template v-if="resetResult.invitation.delivered">
+					A new activation link has been emailed; it expires
+					{{ new Date(resetResult.invitation.expiresAt).toLocaleString() }}.
+				</template>
+				<template v-else>
+					Email is not configured, so the one-time activation link is shown here. It expires
+					{{ new Date(resetResult.invitation.expiresAt).toLocaleString() }}.
+				</template>
 			</p>
-			<code class="inline-block px-3 py-2 mt-3 font-mono text-sm rounded-button bg-slate-50 text-slate-800">
-				{{ resetResult.temporaryPassword }}
+			<code
+				v-if="resetResult.invitation.setupLink"
+				class="inline-block px-3 py-2 mt-3 font-mono text-xs break-all rounded-button bg-slate-50 text-slate-800"
+			>
+				{{ resetResult.invitation.setupLink }}
 			</code>
 		</section>
 
@@ -121,7 +137,7 @@ function formatDate(value?: string | null) {
 						<p class="text-xs text-slate-500">{{ u.email }}</p>
 						<p class="mt-0.5 text-xs text-slate-400">
 							{{ u.status }} · last login {{ formatDate(u.lastLoginAt) }}
-							<span v-if="u.mustChangePassword"> · must change password</span>
+							<span v-if="u.mustChangePassword">· must change password</span>
 						</p>
 					</li>
 				</ul>
@@ -132,7 +148,12 @@ function formatDate(value?: string | null) {
 		<section class="bg-white border shadow-sm border-slate-200 rounded-panel">
 			<header class="flex items-center justify-between px-5 py-4 border-b border-slate-200">
 				<h2 class="text-sm font-semibold text-slate-900">Projects</h2>
-				<UButton :to="`/admin/projects/new?organizationId=${organization.id}`" size="xs" variant="ghost" label="Add project" />
+				<UButton
+					:to="`/admin/projects/new?organizationId=${organization.id}`"
+					size="xs"
+					variant="ghost"
+					label="Add project"
+				/>
 			</header>
 			<ul v-if="projects.length" class="divide-y divide-slate-100">
 				<li v-for="p in projects" :key="p.id" class="flex flex-wrap items-center justify-between gap-3 px-5 py-3">

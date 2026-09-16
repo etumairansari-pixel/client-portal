@@ -14,13 +14,19 @@ const saving = ref(false);
 const error = ref<string | null>(null);
 
 /**
- * The temporary password comes back exactly once, at creation. It is never
- * stored in plaintext and cannot be retrieved again — only reset.
+ * No credential ever comes back. The client receives a one-time activation
+ * link by email; when mail is not configured the link is returned here once
+ * so the Owner can pass it on by another channel.
  */
+interface Invitation {
+	delivered: boolean;
+	expiresAt: string;
+	setupLink?: string;
+}
 const created = ref<{
 	organization: { id: string; name: string };
 	user: { email: string };
-	temporaryPassword: string;
+	invitation: Invitation;
 } | null>(null);
 
 const canSubmit = computed(
@@ -34,7 +40,7 @@ async function submit() {
 		created.value = await $fetch<{
 			organization: { id: string; name: string };
 			user: { email: string };
-			temporaryPassword: string;
+			invitation: Invitation;
 		}>('/api/admin/clients', { method: 'POST', body: { ...form } });
 	} catch (e: any) {
 		error.value = e?.data?.statusMessage ?? e?.message ?? 'Could not create the client.';
@@ -44,9 +50,9 @@ async function submit() {
 }
 
 const copied = ref(false);
-async function copyPassword() {
-	if (!created.value) return;
-	await navigator.clipboard.writeText(created.value.temporaryPassword).catch(() => undefined);
+async function copyLink() {
+	if (!created.value?.invitation.setupLink) return;
+	await navigator.clipboard.writeText(created.value.invitation.setupLink).catch(() => undefined);
 	copied.value = true;
 	setTimeout(() => (copied.value = false), 2000);
 }
@@ -57,9 +63,7 @@ async function copyPassword() {
 		<header>
 			<VBreadcrumbs :items="[{ title: 'Clients', href: '/admin/clients' }, { title: 'New Client' }]" />
 			<h1 class="mt-1 text-2xl font-bold tracking-tight font-display text-slate-900">New Client</h1>
-			<p class="mt-1 text-sm text-slate-500">
-				Creates the company, the portal user, and their login in one step.
-			</p>
+			<p class="mt-1 text-sm text-slate-500">Creates the company, the portal user, and their login in one step.</p>
 		</header>
 
 		<!-- credentials handover -->
@@ -68,9 +72,14 @@ async function copyPassword() {
 				<UIcon name="material-symbols:check-circle-outline-rounded" class="w-6 h-6 mt-0.5 text-green-600" />
 				<div class="min-w-0">
 					<h2 class="text-base font-semibold text-slate-900">{{ created.organization.name }} created</h2>
-					<p class="mt-1 text-sm text-slate-500">
-						Share these credentials with your client. The password is shown once and cannot be retrieved again —
-						only reset.
+					<p v-if="created.invitation.delivered" class="mt-1 text-sm text-slate-500">
+						An invitation has been emailed to {{ created.user.email }}. They will choose their own password from the
+						link, which expires {{ new Date(created.invitation.expiresAt).toLocaleString() }}.
+					</p>
+					<p v-else class="mt-1 text-sm text-slate-500">
+						Email is not configured on this server, so the activation link is shown here once. Pass it to your client by
+						a channel you trust. It works one time and expires
+						{{ new Date(created.invitation.expiresAt).toLocaleString() }}.
 					</p>
 				</div>
 			</div>
@@ -82,20 +91,16 @@ async function copyPassword() {
 						{{ created.user.email }}
 					</dd>
 				</div>
-				<div>
-					<dt class="text-xs font-medium text-slate-500">Temporary password</dt>
-					<dd class="flex items-center gap-2 mt-1">
-						<code class="px-3 py-2 font-mono text-sm rounded-button bg-slate-50 text-slate-800 grow">
-							{{ created.temporaryPassword }}
+				<div v-if="created.invitation.setupLink">
+					<dt class="text-xs font-medium text-slate-500">Activation link</dt>
+					<dd class="flex items-center gap-2 mt-1 min-w-0">
+						<code class="px-3 py-2 font-mono text-xs break-all rounded-button bg-slate-50 text-slate-800 grow">
+							{{ created.invitation.setupLink }}
 						</code>
-						<UButton size="sm" color="white" :label="copied ? 'Copied' : 'Copy'" @click="copyPassword" />
+						<UButton size="sm" color="white" :label="copied ? 'Copied' : 'Copy'" @click="copyLink" />
 					</dd>
 				</div>
 			</dl>
-
-			<p class="mt-4 text-xs text-slate-500">
-				The client will be asked to choose their own password after signing in.
-			</p>
 
 			<div class="flex flex-wrap gap-3 mt-6">
 				<UButton :to="`/admin/clients/${created.organization.id}`" label="Open client" />
@@ -104,7 +109,11 @@ async function copyPassword() {
 		</section>
 
 		<!-- form -->
-		<form v-else class="p-6 space-y-5 bg-white border shadow-sm border-slate-200 rounded-panel" @submit.prevent="submit">
+		<form
+			v-else
+			class="p-6 space-y-5 bg-white border shadow-sm border-slate-200 rounded-panel"
+			@submit.prevent="submit"
+		>
 			<VAlert v-if="error" type="error">{{ error }}</VAlert>
 
 			<UFormGroup label="Company / Organisation name" required>

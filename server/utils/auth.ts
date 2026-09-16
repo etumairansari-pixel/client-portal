@@ -3,11 +3,14 @@ import { hash as argonHash, verify as argonVerify } from '@node-rs/argon2';
 import type { H3Event } from 'h3';
 import type { Role, User } from '@prisma/client';
 import { prisma } from './prisma';
+import { getEnv } from './env';
 
 export const SESSION_COOKIE = 'eiretech_session';
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
 const RESET_TTL_MS = 1000 * 60 * 60; // 1 hour
+export const INVITE_TTL_HOURS = 72;
+const INVITE_TTL_MS = 1000 * 60 * 60 * INVITE_TTL_HOURS;
 
 // ----------------------------------------------------------------- passwords
 
@@ -24,13 +27,13 @@ export async function verifyPassword(storedHash: string, plain: string): Promise
 	}
 }
 
-/** Readable temporary password for the Owner to hand over once. */
-export function generateTemporaryPassword(): string {
-	const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
-	const bytes = randomBytes(14);
-	let out = '';
-	for (const byte of bytes) out += alphabet[byte % alphabet.length];
-	return `${out.slice(0, 5)}-${out.slice(5, 10)}-${out.slice(10)}`;
+/**
+ * A password nobody knows. Assigned to accounts that have been invited but
+ * have not yet chosen a password, so the row is valid but unusable until the
+ * invitation token is redeemed.
+ */
+export function generateUnusablePassword(): string {
+	return randomBytes(48).toString('base64url');
 }
 
 // -------------------------------------------------------------------- tokens
@@ -65,20 +68,30 @@ export async function createSession(event: H3Event, user: User) {
 			tokenHash: hashToken(raw),
 			userId: user.id,
 			expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+			revokedAt: null,
 			userAgent: getRequestHeader(event, 'user-agent')?.slice(0, 255) ?? null,
 			ip: getRequestIP(event, { xForwardedFor: true }) ?? null,
 		},
 	});
 
-	setCookie(event, SESSION_COOKIE, raw, {
-		httpOnly: true, // never readable from JavaScript
-		sameSite: 'lax',
-		secure: process.env.NODE_ENV === 'production',
-		path: '/',
-		maxAge: SESSION_TTL_MS / 1000,
-	});
+	setCookie(event, SESSION_COOKIE, raw, sessionCookieOptions());
 
 	return raw;
+}
+
+/**
+ * Cookie policy. `secure` follows the environment rather than the request so
+ * a proxy that terminates TLS (Hostinger) still gets a Secure cookie; browsers
+ * treat localhost as a secure context, so local previews keep working.
+ */
+export function sessionCookieOptions() {
+	return {
+		httpOnly: true as const, // never readable from JavaScript
+		sameSite: 'lax' as const, // same-origin app; lax keeps top-level navigations working
+		secure: getEnv().isProduction,
+		path: '/',
+		maxAge: SESSION_TTL_MS / 1000,
+	};
 }
 
 export async function destroySession(event: H3Event) {
@@ -88,7 +101,7 @@ export async function destroySession(event: H3Event) {
 			.updateMany({ where: { tokenHash: hashToken(raw) }, data: { revokedAt: new Date() } })
 			.catch(() => undefined);
 	}
-	deleteCookie(event, SESSION_COOKIE, { path: '/' });
+	deleteCookie(event, SESSION_COOKIE, { path: '/', secure: getEnv().isProduction, httpOnly: true, sameSite: 'lax' });
 }
 
 export type SessionUser = Pick<
@@ -117,10 +130,16 @@ export async function getSessionUser(event: H3Event): Promise<SessionUser | null
 	return { id, email, firstName, lastName, role, status, organizationId, mustChangePassword };
 }
 
-/** Revoke every live session for a user (suspend, password reset, etc). */
+/**
+ * Revoke every live session for a user (suspend, password reset, etc).
+ *
+ * On MongoDB a `field: null` filter only matches documents where the field
+ * was written as null, not where it is absent, so both forms are covered —
+ * new sessions store `revokedAt: null` explicitly, older ones may not.
+ */
 export async function revokeAllSessions(userId: string) {
 	await prisma.session.updateMany({
-		where: { userId, revokedAt: null },
+		where: { userId, OR: [{ revokedAt: null }, { revokedAt: { isSet: false } }] },
 		data: { revokedAt: new Date() },
 	});
 }
@@ -136,8 +155,8 @@ export async function requireUser(event: H3Event): Promise<SessionUser> {
 export async function requireRole(event: H3Event, role: Role): Promise<SessionUser> {
 	const user = await requireUser(event);
 	if (user.role !== role) throw createError({ statusCode: 403, statusMessage: 'Forbidden' });
-	// A temporary password grants nothing but the ability to replace it, so the
-	// product APIs stay closed until the handover is finished. The dedicated
+	// An account still flagged for a forced change grants nothing but the
+	// ability to set a password, so the product APIs stay closed until then. The dedicated
 	// change-password route uses requireUser and is deliberately unaffected.
 	if (user.mustChangePassword) {
 		throw createError({ statusCode: 403, statusMessage: 'Please set your own password before continuing' });
@@ -164,7 +183,25 @@ export async function requireClient(event: H3Event): Promise<SessionUser & { org
 export async function createPasswordResetToken(userId: string) {
 	const raw = generateToken();
 	await prisma.passwordResetToken.create({
-		data: { tokenHash: hashToken(raw), userId, expiresAt: new Date(Date.now() + RESET_TTL_MS) },
+		// usedAt stored explicitly so `usedAt: null` filters match on Mongo.
+		data: { tokenHash: hashToken(raw), userId, purpose: 'RESET', usedAt: null, expiresAt: new Date(Date.now() + RESET_TTL_MS) },
+	});
+	return raw;
+}
+
+/**
+ * Account-activation token. Longer-lived than a reset because it is sent to
+ * someone who was not waiting for it. Any earlier unused invitation for the
+ * same user is burned so only the newest link works.
+ */
+export async function createInvitationToken(userId: string) {
+	await prisma.passwordResetToken.updateMany({
+		where: { userId, purpose: 'INVITE', OR: [{ usedAt: null }, { usedAt: { isSet: false } }] },
+		data: { usedAt: new Date() },
+	});
+	const raw = generateToken();
+	await prisma.passwordResetToken.create({
+		data: { tokenHash: hashToken(raw), userId, purpose: 'INVITE', usedAt: null, expiresAt: new Date(Date.now() + INVITE_TTL_MS) },
 	});
 	return raw;
 }

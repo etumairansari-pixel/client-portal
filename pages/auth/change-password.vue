@@ -36,7 +36,7 @@ async function submit() {
 		<div class="space-y-1.5">
 			<h1 class="text-xl font-bold tracking-tight font-display text-slate-900">Choose your password</h1>
 			<p class="text-sm text-slate-500">
-				You're signed in with a temporary password. Please set your own before continuing.
+				Your account needs a new password before you can continue. Please choose one only you know.
 			</p>
 		</div>
 
@@ -50,13 +50,13 @@ async function submit() {
 		/>
 
 		<form class="grid gap-4" @submit.prevent="submit">
-			<UFormGroup label="Temporary password" required>
+			<UFormGroup label="Current password" required>
 				<UInput
 					v-model="form.currentPassword"
 					type="password"
 					name="currentPassword"
 					size="lg"
-					placeholder="The password you were given"
+					placeholder="Your current password"
 					:disabled="loading"
 				/>
 			</UFormGroup>
