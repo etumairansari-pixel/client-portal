@@ -1,4 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { theme } from './theme';
+
+// Branded page the dev server shows while it compiles (replaces the Nuxt one).
+const devLoadingPage = readFileSync(fileURLToPath(new URL('./app/dev-loading.html', import.meta.url)), 'utf8');
 
 export default defineNuxtConfig({
 	// https://nuxt.com/docs/api/configuration/nuxt-config
@@ -51,6 +56,10 @@ export default defineNuxtConfig({
 	},
 
 	devtools: { enabled: true },
+
+	devServer: {
+		loadingTemplate: () => devLoadingPage,
+	},
 
 	// Runtime data (uploads, the dev mail outbox) is not source; keep the dev
 	// watcher off it so writes never trigger rebuilds.
