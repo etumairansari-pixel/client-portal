@@ -1,8 +1,12 @@
 import { prisma } from '../utils/prisma';
+import { sendWorkflowEmailForNotification } from './mail';
 
 /**
  * In-app notifications. Deliberately best-effort: a notification failure must
  * never break the business action that triggered it.
+ *
+ * A small whitelist of notification types (see EMAIL_NOTIFICATION_TYPES) is
+ * also delivered by email; the mail service decides, so callers stay unaware.
  */
 export interface NotifyInput {
 	userId: string;
@@ -27,6 +31,7 @@ export async function notify(input: NotifyInput) {
 				readAt: null,
 			},
 		});
+		await sendWorkflowEmailForNotification(input);
 	} catch {
 		// non-fatal
 	}
