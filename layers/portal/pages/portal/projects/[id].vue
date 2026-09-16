@@ -5,6 +5,7 @@
  * every internal field. Nothing on this page can change stage, progress or
  * status - the client's only write actions are change requests and replies.
  */
+import { UPLOAD_ACCEPT } from '~~/shared/uploads';
 import type { WorkspaceTab } from '~/components/WorkspaceTabs.vue';
 import { STAGE_LABEL, HEALTH_LABEL, TEAM_LABEL, CHANGE_REQUEST_TYPES, CR_TYPE_LABEL, PRIORITIES, PRIORITY_LABEL } from '~~/shared/delivery';
 
@@ -346,7 +347,7 @@ function fmtSize(n: number) {
 					<USelect v-model="crForm.relatedMilestoneId" :options="[{ value: '', label: 'None' }, ...milestones.map((m) => ({ value: m.id, label: m.title }))]" />
 				</UFormGroup>
 				<UFormGroup label="Attachment (optional)">
-					<input type="file" class="block w-full text-xs text-slate-500 file:mr-3 file:rounded-button file:border file:border-slate-200 file:bg-white file:px-3 file:py-1.5 file:text-xs" @change="crFile = ($event.target as HTMLInputElement).files?.[0] ?? null" />
+					<input type="file" :accept="UPLOAD_ACCEPT" class="block w-full text-xs text-slate-500 file:mr-3 file:rounded-button file:border file:border-slate-200 file:bg-white file:px-3 file:py-1.5 file:text-xs" @change="crFile = ($event.target as HTMLInputElement).files?.[0] ?? null" />
 				</UFormGroup>
 				<div class="flex justify-end gap-2 pt-2">
 					<UButton color="white" label="Cancel" @click="crModal = false" />

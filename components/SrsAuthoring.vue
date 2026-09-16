@@ -12,6 +12,7 @@ import {
 	PRIORITY_LABEL,
 	CLIENT_VISIBLE_SRS_STATUSES,
 } from '~~/shared/srs-template';
+import { UPLOAD_ACCEPT } from '~~/shared/uploads';
 import { SCOPE_SECTIONS, visibleQuestions } from '~~/shared/scope-questionnaire';
 
 const props = defineProps<{ srsId: string }>();
@@ -409,6 +410,7 @@ function fmtSize(n: number) {
 						<span class="sr-only">Upload file</span>
 						<input
 							type="file"
+							:accept="UPLOAD_ACCEPT"
 							class="block w-full text-xs text-slate-500 file:mr-3 file:rounded-button file:border file:border-slate-200 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-medium"
 							:disabled="uploading"
 							@change="onFile"

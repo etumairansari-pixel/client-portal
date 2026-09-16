@@ -113,15 +113,18 @@ export async function submitScope(event: H3Event, scope: Scope, userId: string) 
 		data: { status: 'SUBMITTED', submittedAt: new Date(), currentVersion: versionNumber },
 	});
 
-	await recordAudit(event, {
-		actorUserId: userId,
-		action: 'SCOPE_SUBMITTED',
-		entityType: 'scope',
-		entityId: scope.id,
-		metadata: { versionNumber },
-	});
-
-	const org = await prisma.organization.findUnique({ where: { id: scope.organizationId }, select: { name: true } });
+	// Independent writes/reads after the state change run concurrently: each
+	// database round-trip is paid once, not in sequence.
+	const [, org] = await Promise.all([
+		recordAudit(event, {
+			actorUserId: userId,
+			action: 'SCOPE_SUBMITTED',
+			entityType: 'scope',
+			entityId: scope.id,
+			metadata: { versionNumber },
+		}),
+		prisma.organization.findUnique({ where: { id: scope.organizationId }, select: { name: true } }),
+	]);
 	await notifyOwners({
 		type: 'SCOPE_SUBMITTED',
 		title: 'Scope submitted',

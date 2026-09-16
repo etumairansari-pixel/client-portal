@@ -10,25 +10,9 @@
  *   - the original filename is sanitised before it is stored or echoed back
  */
 
-export const MAX_FILE_BYTES = 15 * 1024 * 1024; // 15 MB
+import { ALLOWED_TYPES, MAX_FILE_BYTES } from '../../../shared/uploads.ts';
 
-/** Declared MIME → acceptable extensions. */
-export const ALLOWED_TYPES: Record<string, readonly string[]> = {
-	'image/jpeg': ['jpg', 'jpeg'],
-	'image/png': ['png'],
-	'image/gif': ['gif'],
-	'image/webp': ['webp'],
-	'application/pdf': ['pdf'],
-	'text/plain': ['txt', 'md', 'log'],
-	'text/csv': ['csv'],
-	'application/msword': ['doc'],
-	'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['docx'],
-	'application/vnd.ms-excel': ['xls', 'csv'],
-	'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['xlsx'],
-	'application/vnd.ms-powerpoint': ['ppt'],
-	'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['pptx'],
-	'application/zip': ['zip'],
-};
+export { ALLOWED_TYPES, MAX_FILE_BYTES };
 
 export const ALLOWED_MIME = new Set(Object.keys(ALLOWED_TYPES));
 

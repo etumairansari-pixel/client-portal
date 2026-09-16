@@ -31,7 +31,9 @@ export async function notify(input: NotifyInput) {
 				readAt: null,
 			},
 		});
-		await sendWorkflowEmailForNotification(input);
+		// Email delivery is not awaited: an SMTP round-trip must never hold up
+		// the HTTP response that triggered it. The mail service logs failures.
+		void sendWorkflowEmailForNotification(input);
 	} catch {
 		// non-fatal
 	}
@@ -44,7 +46,7 @@ export async function notifyOwners(input: Omit<NotifyInput, 'userId' | 'organiza
 			where: { role: 'OWNER', status: 'ACTIVE' },
 			select: { id: true },
 		});
-		for (const o of owners) await notify({ ...input, userId: o.id });
+		await Promise.all(owners.map((o) => notify({ ...input, userId: o.id })));
 	} catch {
 		// non-fatal
 	}
@@ -59,7 +61,7 @@ export async function notifyOrganizationClients(
 			where: { organizationId, role: 'CLIENT', status: 'ACTIVE' },
 			select: { id: true },
 		});
-		for (const c of clients) await notify({ ...input, userId: c.id, organizationId });
+		await Promise.all(clients.map((c) => notify({ ...input, userId: c.id, organizationId })));
 	} catch {
 		// non-fatal
 	}

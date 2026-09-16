@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ScopeQuestion } from '~~/shared/scope-questionnaire';
+import { UPLOAD_ACCEPT, UPLOAD_HINT } from '~~/shared/uploads';
 
 const props = defineProps<{
 	question: ScopeQuestion;
@@ -82,8 +83,8 @@ function formatSize(bytes: number) {
 					<span class="text-sm font-medium text-slate-600">
 						{{ uploading ? 'Uploading…' : 'Click to upload files' }}
 					</span>
-					<span class="mt-0.5 text-xs text-slate-400">Up to 15 MB each</span>
-					<input type="file" multiple class="hidden" :disabled="uploading" @change="onSelect" />
+					<span class="mt-0.5 text-xs text-slate-400">{{ UPLOAD_HINT }}</span>
+					<input type="file" multiple :accept="UPLOAD_ACCEPT" class="hidden" :disabled="uploading" @change="onSelect" />
 				</label>
 
 				<VAlert v-if="uploadError" type="error" class="mt-3">{{ uploadError }}</VAlert>

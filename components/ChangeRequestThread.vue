@@ -5,6 +5,7 @@
  *
  * Author labels are "Eiretech" / "Client" only. Employee identity never renders.
  */
+import { UPLOAD_ACCEPT } from '~~/shared/uploads';
 const props = defineProps<{
 	cr: any;
 	side: 'EIRETECH' | 'CLIENT';
@@ -75,7 +76,7 @@ function fmtSize(n: number) {
 				</li>
 			</ul>
 			<label v-if="canAttach && !closed" class="block mt-2">
-				<input type="file" class="block w-full text-xs text-slate-500 file:mr-3 file:rounded-button file:border file:border-slate-200 file:bg-white file:px-3 file:py-1 file:text-xs" @change="onFile" />
+				<input type="file" :accept="UPLOAD_ACCEPT" class="block w-full text-xs text-slate-500 file:mr-3 file:rounded-button file:border file:border-slate-200 file:bg-white file:px-3 file:py-1 file:text-xs" @change="onFile" />
 			</label>
 		</section>
 
