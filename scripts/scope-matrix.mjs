@@ -3,13 +3,15 @@
  * Drives the real HTTP API with cookie sessions, exactly as a browser would.
  */
 import { PrismaClient } from '@prisma/client';
+import { OWNER, CLIENT_A, CLIENT_B } from './lib/dev-fixtures.mjs';
 
 const BASE = process.env.BASE || 'http://localhost:3000';
 let pass = 0;
 let fail = 0;
 
 function check(label, ok, detail = '') {
-	ok ? pass++ : fail++;
+	if (ok) pass++;
+	else fail++;
 	console.log(`  ${ok ? 'PASS' : '*** FAIL ***'}  ${label.padEnd(58)} ${detail}`);
 }
 
@@ -28,12 +30,13 @@ function jar() {
 	};
 }
 
+const jsonBody = (body) => (body ? JSON.stringify(body) : undefined);
 async function call(j, path, { method = 'GET', body, raw } = {}) {
 	const isForm = raw instanceof FormData;
 	const res = await fetch(BASE + path, {
 		method,
 		headers: { ...(isForm ? {} : { 'Content-Type': 'application/json' }), ...j.header },
-		body: isForm ? raw : body ? JSON.stringify(body) : undefined,
+		body: isForm ? raw : jsonBody(body),
 		redirect: 'manual',
 	});
 	j.absorb(res);
@@ -86,8 +89,8 @@ async function main() {
 	await prisma.scope.deleteMany({});
 	await prisma.notification.deleteMany({});
 
-	const orgA = await prisma.organization.findFirst({ where: { name: 'Client A Ltd' } });
-	const orgB = await prisma.organization.findFirst({ where: { name: 'Client B Ltd' } });
+	const orgA = await prisma.organization.findFirst({ where: { name: CLIENT_A.organizationName } });
+	const orgB = await prisma.organization.findFirst({ where: { name: CLIENT_B.organizationName } });
 
 	// ------------------------------------------------ unauthenticated
 	console.log(`\n${'='.repeat(104)}\nUNAUTHENTICATED SCOPE ENDPOINTS\n${'='.repeat(104)}`);
@@ -106,22 +109,33 @@ async function main() {
 
 	// ------------------------------------------------ client A lifecycle
 	console.log(`\n${'='.repeat(104)}\nCLIENT A — DRAFT → SUBMIT\n${'='.repeat(104)}`);
-	const A = await login('clienta@example.com', 'ClientALocal!2026');
+	const A = await login(CLIENT_A.email, CLIENT_A.password);
 
 	let r = await call(A.j, '/api/portal/scope');
 	const scopeA = r.data.scope;
 	check('scope auto-created on first open', r.ok && scopeA.status === 'DRAFT', scopeA?.status);
 	check('belongs to own organization', scopeA.organizationId === orgA.id, 'ok');
 
-	r = await call(A.j, '/api/portal/scope/save', { method: 'POST', body: { answers: { project_name: 'Partial' }, silent: true } });
+	r = await call(A.j, '/api/portal/scope/save', {
+		method: 'POST',
+		body: { answers: { project_name: 'Partial' }, silent: true },
+	});
 	check('autosave (silent) works', r.ok, `completion ${r.data?.scope?.completionPercentage}%`);
-	check('completion reflects required-only', r.data?.scope?.completionPercentage === 8, `${r.data?.scope?.completionPercentage}%`);
+	check(
+		'completion reflects required-only',
+		r.data?.scope?.completionPercentage === 8,
+		`${r.data?.scope?.completionPercentage}%`,
+	);
 
 	r = await call(A.j, '/api/portal/scope/submit', { method: 'POST' });
 	check('submit blocked while incomplete', r.status === 400, `HTTP ${r.status}`);
 
 	r = await call(A.j, '/api/portal/scope/save', { method: 'POST', body: { answers: completeAnswers() } });
-	check('draft save reaches 100%', r.data?.scope?.completionPercentage === 100, `${r.data?.scope?.completionPercentage}%`);
+	check(
+		'draft save reaches 100%',
+		r.data?.scope?.completionPercentage === 100,
+		`${r.data?.scope?.completionPercentage}%`,
+	);
 
 	// upload
 	const form = new FormData();
@@ -155,7 +169,7 @@ async function main() {
 
 	// ------------------------------------------------ cross-tenant
 	console.log(`\n${'='.repeat(104)}\nCLIENT B — CROSS-TENANT ISOLATION\n${'='.repeat(104)}`);
-	const B = await login('clientb@example.com', 'ClientBLocal!2026');
+	const B = await login(CLIENT_B.email, CLIENT_B.password);
 
 	r = await call(B.j, '/api/portal/scope');
 	const scopeB = r.data.scope;
@@ -164,15 +178,26 @@ async function main() {
 	r = await call(B.j, `/api/portal/scope/files/${fileA.id}`);
 	check("B cannot download A's file (exact id)", r.status === 404, `HTTP ${r.status}`);
 
-	r = await call(B.j, '/api/portal/scope/reply', { method: 'POST', body: { discussionId: '507f1f77bcf86cd799439011', body: 'x' } });
+	r = await call(B.j, '/api/portal/scope/reply', {
+		method: 'POST',
+		body: { discussionId: '507f1f77bcf86cd799439011', body: 'x' },
+	});
 	check('B cannot reply to unknown/other discussion', r.status === 404, `HTTP ${r.status}`);
 
 	for (const [label, path, opts] of [
 		['GET /api/admin/scopes', '/api/admin/scopes', {}],
 		['GET admin scope detail', `/api/admin/scopes/${scopeA.id}`, {}],
-		['POST admin status', `/api/admin/scopes/${scopeA.id}/status`, { method: 'POST', body: { status: 'UNDER_REVIEW' } }],
+		[
+			'POST admin status',
+			`/api/admin/scopes/${scopeA.id}/status`,
+			{ method: 'POST', body: { status: 'UNDER_REVIEW' } },
+		],
 		['POST admin approve', `/api/admin/scopes/${scopeA.id}/approve`, { method: 'POST' }],
-		['POST admin clarification', `/api/admin/scopes/${scopeA.id}/discussions`, { method: 'POST', body: { subject: 'x', body: 'y' } }],
+		[
+			'POST admin clarification',
+			`/api/admin/scopes/${scopeA.id}/discussions`,
+			{ method: 'POST', body: { subject: 'x', body: 'y' } },
+		],
 	]) {
 		const res = await call(B.j, path, opts);
 		check('client → ' + label + ' → 403', res.status === 403, `HTTP ${res.status}`);
@@ -181,7 +206,12 @@ async function main() {
 	// direct field tampering
 	r = await call(B.j, '/api/portal/scope/save', {
 		method: 'POST',
-		body: { answers: { project_name: 'x' }, organizationId: orgA.id, status: 'APPROVED', lockedAt: new Date().toISOString() },
+		body: {
+			answers: { project_name: 'x' },
+			organizationId: orgA.id,
+			status: 'APPROVED',
+			lockedAt: new Date().toISOString(),
+		},
 	});
 	const afterTamper = await prisma.scope.findUnique({ where: { id: scopeB.id } });
 	check(
@@ -195,7 +225,7 @@ async function main() {
 
 	// ------------------------------------------------ owner review
 	console.log(`\n${'='.repeat(104)}\nOWNER — REVIEW → CLARIFY → APPROVE\n${'='.repeat(104)}`);
-	const O = await login('owner@eiretech360.com', 'OwnerLocal!2026');
+	const O = await login(OWNER.email, OWNER.password);
 
 	r = await call(O.j, '/api/admin/scopes');
 	check('owner sees all scopes', (r.data?.scopes ?? []).length >= 2, `${r.data?.scopes?.length} scope(s)`);
@@ -208,7 +238,11 @@ async function main() {
 
 	r = await call(O.j, `/api/admin/scopes/${scopeA.id}/discussions`, {
 		method: 'POST',
-		body: { subject: 'Inventory sync', body: 'Should stock sync between POS and the store?', requiresClientResponse: true },
+		body: {
+			subject: 'Inventory sync',
+			body: 'Should stock sync between POS and the store?',
+			requiresClientResponse: true,
+		},
 	});
 	const discussion = r.data?.discussion;
 	check('owner raises clarification', r.ok && !!discussion?.id, discussion?.subject);
@@ -216,10 +250,16 @@ async function main() {
 	let sc = await prisma.scope.findUnique({ where: { id: scopeA.id } });
 	check('scope moves to CLARIFICATION_REQUIRED', sc.status === 'CLARIFICATION_REQUIRED', sc.status);
 
-	r = await call(B.j, '/api/portal/scope/reply', { method: 'POST', body: { discussionId: discussion.id, body: 'hijack' } });
+	r = await call(B.j, '/api/portal/scope/reply', {
+		method: 'POST',
+		body: { discussionId: discussion.id, body: 'hijack' },
+	});
 	check("B cannot reply on A's clarification", r.status === 404, `HTTP ${r.status}`);
 
-	r = await call(A.j, '/api/portal/scope/reply', { method: 'POST', body: { discussionId: discussion.id, body: 'Yes, near real-time.' } });
+	r = await call(A.j, '/api/portal/scope/reply', {
+		method: 'POST',
+		body: { discussionId: discussion.id, body: 'Yes, near real-time.' },
+	});
 	check('A answers the clarification', r.ok, 'replied');
 
 	sc = await prisma.scope.findUnique({ where: { id: scopeA.id } });
@@ -234,13 +274,19 @@ async function main() {
 		`${msgs.length} message(s), sides only`,
 	);
 
-	r = await call(O.j, '/api/admin/scope-discussions/resolve', { method: 'POST', body: { discussionId: discussion.id } });
+	r = await call(O.j, '/api/admin/scope-discussions/resolve', {
+		method: 'POST',
+		body: { discussionId: discussion.id },
+	});
 	check('owner resolves clarification', r.ok, 'resolved');
 
 	r = await call(O.j, `/api/admin/scopes/${scopeA.id}/approve`, { method: 'POST' });
 	check('owner cannot approve before client agrees', r.status === 409, `HTTP ${r.status}`);
 
-	r = await call(O.j, `/api/admin/scopes/${scopeA.id}/status`, { method: 'POST', body: { status: 'READY_FOR_APPROVAL' } });
+	r = await call(O.j, `/api/admin/scopes/${scopeA.id}/status`, {
+		method: 'POST',
+		body: { status: 'READY_FOR_APPROVAL' },
+	});
 	check('owner marks ready for approval', r.ok && r.data.scope.status === 'READY_FOR_APPROVAL', r.data?.scope?.status);
 
 	r = await call(B.j, '/api/portal/scope/approve', { method: 'POST' });
@@ -261,29 +307,45 @@ async function main() {
 	r = await call(A.j, '/api/portal/scope/save', { method: 'POST', body: { answers: { project_name: 'after lock' } } });
 	check('client cannot edit an approved scope', r.status === 409, `HTTP ${r.status}`);
 
-	r = await call(A.j, '/api/portal/scope/reply', { method: 'POST', body: { discussionId: discussion.id, body: 'more' } });
+	r = await call(A.j, '/api/portal/scope/reply', {
+		method: 'POST',
+		body: { discussionId: discussion.id, body: 'more' },
+	});
 	check('client cannot post to a locked scope', r.status === 409, `HTTP ${r.status}`);
 
-	r = await call(O.j, `/api/admin/scopes/${scopeA.id}/discussions`, { method: 'POST', body: { subject: 'x', body: 'y' } });
+	r = await call(O.j, `/api/admin/scopes/${scopeA.id}/discussions`, {
+		method: 'POST',
+		body: { subject: 'x', body: 'y' },
+	});
 	check('owner cannot reopen a locked scope', r.status === 409, `HTTP ${r.status}`);
 
 	r = await call(O.j, `/api/admin/scopes/${scopeA.id}/status`, { method: 'POST', body: { status: 'UNDER_REVIEW' } });
 	check('owner cannot re-status a locked scope', r.status === 409, `HTTP ${r.status}`);
 
 	const finalVersions = await prisma.scopeVersion.findMany({ where: { scopeId: scopeA.id } });
-	check('historical version preserved', finalVersions.length === 1 && finalVersions[0].versionNumber === 1, `v${finalVersions[0]?.versionNumber}`);
+	check(
+		'historical version preserved',
+		finalVersions.length === 1 && finalVersions[0].versionNumber === 1,
+		`v${finalVersions[0]?.versionNumber}`,
+	);
 
 	// ------------------------------------------------ notifications + audit
 	console.log(`\n${'='.repeat(104)}\nNOTIFICATIONS & AUDIT\n${'='.repeat(104)}`);
 	r = await call(A.j, '/api/notifications');
 	const aNotes = r.data?.notifications ?? [];
 	check('client receives notifications', aNotes.length > 0, `${aNotes.length}`);
-	check('client notifications are own-user only', aNotes.every((n) => n.userId === A.user.id), 'ok');
+	check(
+		'client notifications are own-user only',
+		aNotes.every((n) => n.userId === A.user.id),
+		'ok',
+	);
 
 	r = await call(O.j, '/api/notifications');
 	check('owner receives notifications', (r.data?.notifications ?? []).length > 0, `${r.data?.notifications?.length}`);
 
-	const actions = new Set((await prisma.auditLog.findMany({ take: 100, orderBy: { createdAt: 'desc' } })).map((a) => a.action));
+	const actions = new Set(
+		(await prisma.auditLog.findMany({ take: 100, orderBy: { createdAt: 'desc' } })).map((a) => a.action),
+	);
 	for (const a of [
 		'SCOPE_CREATED',
 		'SCOPE_SUBMITTED',

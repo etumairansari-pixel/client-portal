@@ -3,13 +3,15 @@
  * Exercises the real HTTP API with cookie sessions, exactly as a browser would.
  */
 import { PrismaClient } from '@prisma/client';
+import { OWNER, CLIENT_A, CLIENT_B } from './lib/dev-fixtures.mjs';
 
 const BASE = process.env.BASE || 'http://localhost:3000';
 let pass = 0;
 let fail = 0;
 
 function check(label, ok, detail = '') {
-	ok ? pass++ : fail++;
+	if (ok) pass++;
+	else fail++;
 	console.log(`  ${ok ? 'PASS' : '*** FAIL ***'}  ${label.padEnd(58)} ${detail}`);
 }
 
@@ -59,11 +61,10 @@ const prisma = new PrismaClient();
 async function main() {
 	console.log('BASE:', BASE);
 
-	const orgA = await prisma.organization.findFirst({ where: { name: 'Client A Ltd' } });
-	const orgB = await prisma.organization.findFirst({ where: { name: 'Client B Ltd' } });
+	const orgA = await prisma.organization.findFirst({ where: { name: CLIENT_A.organizationName } });
+	const orgB = await prisma.organization.findFirst({ where: { name: CLIENT_B.organizationName } });
 	const projA = await prisma.project.findFirst({ where: { organizationId: orgA.id } });
 	const projB = await prisma.project.findFirst({ where: { organizationId: orgB.id } });
-	const userB = await prisma.user.findUnique({ where: { email: 'clientb@example.com' } });
 
 	// ---------------------------------------------------- unauthenticated
 	console.log(`\n${'='.repeat(104)}\nUNAUTHENTICATED\n${'='.repeat(104)}`);
@@ -83,7 +84,7 @@ async function main() {
 
 	const badLogin = await call(jar(), '/api/auth/login', {
 		method: 'POST',
-		body: { email: 'clienta@example.com', password: 'wrong-password' },
+		body: { email: CLIENT_A.email, password: 'wrong-password' },
 	});
 	check('wrong password rejected', badLogin.status === 401, `HTTP ${badLogin.status}`);
 
@@ -91,27 +92,27 @@ async function main() {
 		method: 'POST',
 		body: { email: 'nobody@example.com', password: 'whatever' },
 	});
-	check(
-		'unknown email gives same 401 (no enumeration)',
-		ghost.status === badLogin.status,
-		`HTTP ${ghost.status}`,
-	);
+	check('unknown email gives same 401 (no enumeration)', ghost.status === badLogin.status, `HTTP ${ghost.status}`);
 
 	// ---------------------------------------------------- client A
-	console.log(`\n${'='.repeat(104)}\nCLIENT A — clienta@example.com\n${'='.repeat(104)}`);
-	const A = await login('clienta@example.com', 'ClientALocal!2026');
+	console.log(`\n${'='.repeat(104)}\nCLIENT A — ${CLIENT_A.email}\n${'='.repeat(104)}`);
+	const A = await login(CLIENT_A.email, CLIENT_A.password);
 	check('login succeeds', !!A.user, `role=${A.user.role}`);
 	check('login redirect -> /portal', A.redirect === '/portal', A.redirect);
 
 	let r = await call(A.j, '/api/auth/me');
-	check('own session resolves', r.data?.user?.email === 'clienta@example.com', r.data?.user?.email);
+	check('own session resolves', r.data?.user?.email === CLIENT_A.email, r.data?.user?.email);
 
 	r = await call(A.j, '/api/portal/dashboard');
 	check('own dashboard', r.ok && r.data?.organization?.id === orgA.id, r.data?.organization?.name);
 
 	r = await call(A.j, '/api/portal/projects');
 	const aIds = (r.data?.projects ?? []).map((p) => p.id);
-	check('project list is own org only', aIds.length > 0 && aIds.every((id) => id === projA.id), `${aIds.length} project(s)`);
+	check(
+		'project list is own org only',
+		aIds.length > 0 && aIds.every((id) => id === projA.id),
+		`${aIds.length} project(s)`,
+	);
 
 	r = await call(A.j, `/api/portal/projects/${projA.id}`);
 	check('own project by id', r.ok, `HTTP ${r.status}`);
@@ -120,7 +121,7 @@ async function main() {
 	check("other tenant's project by id (ID manipulation)", r.status === 404, `HTTP ${r.status}`);
 
 	r = await call(A.j, '/api/account');
-	check('own account', r.data?.user?.email === 'clienta@example.com', r.data?.user?.organization?.name);
+	check('own account', r.data?.user?.email === CLIENT_A.email, r.data?.user?.organization?.name);
 
 	console.log('\n  -- admin surface must be closed to a CLIENT --');
 	for (const [label, path, opts] of [
@@ -128,8 +129,19 @@ async function main() {
 		['GET /api/admin/clients', '/api/admin/clients', {}],
 		['GET /api/admin/projects', '/api/admin/projects', {}],
 		['GET other client detail', `/api/admin/clients/${orgB.id}`, {}],
-		['POST create client', '/api/admin/clients', { method: 'POST', body: { organizationName: 'Hacked', firstName: 'a', lastName: 'b', email: 'hack@example.com' } }],
-		['POST create project', '/api/admin/projects', { method: 'POST', body: { organizationId: orgB.id, name: 'Hacked' } }],
+		[
+			'POST create client',
+			'/api/admin/clients',
+			{
+				method: 'POST',
+				body: { organizationName: 'Hacked', firstName: 'a', lastName: 'b', email: 'hack@example.com' },
+			},
+		],
+		[
+			'POST create project',
+			'/api/admin/projects',
+			{ method: 'POST', body: { organizationId: orgB.id, name: 'Hacked' } },
+		],
 		['PATCH other client', `/api/admin/clients/${orgB.id}`, { method: 'PATCH', body: { status: 'SUSPENDED' } }],
 		['POST reset other client access', `/api/admin/clients/${orgB.id}/reset-access`, { method: 'POST' }],
 	]) {
@@ -140,7 +152,7 @@ async function main() {
 	console.log('\n  -- privilege escalation attempts --');
 	r = await call(A.j, '/api/account/change-password', {
 		method: 'POST',
-		body: { currentPassword: 'ClientALocal!2026', newPassword: 'x' },
+		body: { currentPassword: CLIENT_A.password, newPassword: 'x' },
 	});
 	check('short password rejected', r.status === 400, `HTTP ${r.status}`);
 
@@ -151,11 +163,15 @@ async function main() {
 	check('wrong current password rejected', r.status === 400, `HTTP ${r.status}`);
 
 	// ---------------------------------------------------- client B
-	console.log(`\n${'='.repeat(104)}\nCLIENT B — clientb@example.com\n${'='.repeat(104)}`);
-	const B = await login('clientb@example.com', 'ClientBLocal!2026');
+	console.log(`\n${'='.repeat(104)}\nCLIENT B — ${CLIENT_B.email}\n${'='.repeat(104)}`);
+	const B = await login(CLIENT_B.email, CLIENT_B.password);
 	r = await call(B.j, '/api/portal/projects');
 	const bIds = (r.data?.projects ?? []).map((p) => p.id);
-	check('project list is own org only', bIds.length > 0 && bIds.every((id) => id === projB.id), `${bIds.length} project(s)`);
+	check(
+		'project list is own org only',
+		bIds.length > 0 && bIds.every((id) => id === projB.id),
+		`${bIds.length} project(s)`,
+	);
 
 	r = await call(B.j, `/api/portal/projects/${projA.id}`);
 	check("other tenant's project by id (ID manipulation)", r.status === 404, `HTTP ${r.status}`);
@@ -167,8 +183,8 @@ async function main() {
 	check('own dashboard is org B', r.data?.organization?.id === orgB.id, r.data?.organization?.name);
 
 	// ---------------------------------------------------- owner
-	console.log(`\n${'='.repeat(104)}\nOWNER — owner@eiretech360.com\n${'='.repeat(104)}`);
-	const O = await login('owner@eiretech360.com', 'OwnerLocal!2026');
+	console.log(`\n${'='.repeat(104)}\nOWNER — ${OWNER.email}\n${'='.repeat(104)}`);
+	const O = await login(OWNER.email, OWNER.password);
 	check('login redirect -> /admin', O.redirect === '/admin', O.redirect);
 
 	r = await call(O.j, '/api/admin/dashboard');
@@ -176,7 +192,11 @@ async function main() {
 
 	r = await call(O.j, '/api/admin/clients');
 	const orgNames = (r.data?.organizations ?? []).map((o) => o.name);
-	check('owner sees ALL clients', orgNames.includes('Client A Ltd') && orgNames.includes('Client B Ltd'), orgNames.join(', '));
+	check(
+		'owner sees ALL clients',
+		orgNames.includes('Client A Ltd') && orgNames.includes('Client B Ltd'),
+		orgNames.join(', '),
+	);
 
 	r = await call(O.j, `/api/admin/clients/${orgA.id}`);
 	check('owner reads client A', r.ok, r.data?.organization?.name);
@@ -187,26 +207,32 @@ async function main() {
 	r = await call(O.j, '/api/portal/projects');
 	check('owner blocked from CLIENT-only portal API', r.status === 403, `HTTP ${r.status}`);
 
-	// create a client end to end
+	// create a client end to end — invitation flow, no credential ever returned
 	const email = `matrix+${Date.now()}@example.com`;
 	r = await call(O.j, '/api/admin/clients', {
 		method: 'POST',
 		body: { organizationName: 'Matrix Test Co', firstName: 'Matrix', lastName: 'Tester', email },
 	});
 	const created = r.data;
-	check('owner creates client', r.ok && !!created?.temporaryPassword, created?.organization?.name);
-	check('temporary password returned once', typeof created?.temporaryPassword === 'string' && created.temporaryPassword.length >= 12, 'len=' + created?.temporaryPassword?.length);
+	check('owner creates client', r.ok && !!created?.invitation, created?.organization?.name);
+	check('no password in the response', !JSON.stringify(created ?? {}).match(/temporaryPassword|passwordHash|password"/), '');
+	const inv = created?.invitation ?? {};
+	check('invitation reports delivery status + expiry', typeof inv.delivered === 'boolean' && !!inv.expiresAt, `delivered=${inv.delivered}`);
+	const tokenFromLink = (link) => new URL(link).searchParams.get('token');
+	// Without SMTP the one-time link is handed back to the Owner exactly once.
+	const setupToken = inv.setupLink ? tokenFromLink(inv.setupLink) : null;
+	check('setup link returned only when mail is not delivered', inv.delivered ? !inv.setupLink : !!inv.setupLink, inv.delivered ? 'emailed' : 'link returned');
 
-	// the brand new client can actually log in with it
-	const N = await login(email, created.temporaryPassword);
-	check('new client can log in with temp password', N.user?.role === 'CLIENT', N.user?.email);
-	check('new client is flagged mustChangePassword', N.user?.mustChangePassword === true, String(N.user?.mustChangePassword));
-
-	// plaintext is never persisted
+	// the account is unusable until the invitation is redeemed
 	const dbUser = await prisma.user.findUnique({ where: { email } });
-	check('password stored as argon2 hash only', dbUser.passwordHash.startsWith('$argon2') && !dbUser.passwordHash.includes(created.temporaryPassword), dbUser.passwordHash.slice(0, 18) + '…');
+	check('invited user flagged mustChangePassword', dbUser?.mustChangePassword === true, '');
+	check('password stored as argon2 hash only', dbUser.passwordHash.startsWith('$argon2'), dbUser.passwordHash.slice(0, 18) + '…');
+	const pending = await prisma.passwordResetToken.findFirst({ where: { userId: dbUser.id, purpose: 'INVITE', usedAt: null } });
+	check('invitation token stored hashed with 72h expiry', !!pending && pending.tokenHash.length === 64 && pending.expiresAt - Date.now() > 70 * 3600 * 1000, '');
+	r = await call(jar(), '/api/auth/login', { method: 'POST', body: { email, password: 'anything-at-all-12' } });
+	check('invited client cannot log in before activation', r.status === 401, `HTTP ${r.status}`);
 
-	// owner creates a project for that client
+	// owner creates a project for that client meanwhile
 	r = await call(O.j, '/api/admin/projects', {
 		method: 'POST',
 		body: { organizationId: created.organization.id, name: 'Matrix Project', currentStage: 'PLANNING' },
@@ -217,15 +243,19 @@ async function main() {
 	r = await call(O.j, `/api/admin/projects/${newProjectId}`, { method: 'PATCH', body: { currentStage: 'DESIGN' } });
 	check('owner updates project stage', r.data?.project?.currentStage === 'DESIGN', r.data?.project?.currentStage);
 
-	// A temporary password unlocks nothing but the password change itself.
-	r = await call(N.j, '/api/portal/projects');
-	check('temp-password client is blocked from product APIs', r.status === 403, `HTTP ${r.status}`);
+	// client activates via the one-time link (the token is what the email carries)
+	const chosen = 'ChosenByClient!2026';
+	r = await call(jar(), '/api/auth/reset-password', { method: 'POST', body: { token: setupToken ?? 'x', password: 'short' } });
+	check('weak password rejected on activation', r.status === 400, `HTTP ${r.status}`);
+	r = await call(jar(), '/api/auth/reset-password', { method: 'POST', body: { token: setupToken ?? 'x', password: chosen } });
+	check('client activates account via invitation token', r.ok, `HTTP ${r.status}`);
+	r = await call(jar(), '/api/auth/reset-password', { method: 'POST', body: { token: setupToken ?? 'x', password: chosen + '2' } });
+	check('invitation token is single-use', r.status === 400, `HTTP ${r.status}`);
+	const activated = await prisma.user.findUnique({ where: { email } });
+	check('mustChangePassword cleared after activation', activated?.mustChangePassword === false, '');
 
-	r = await call(N.j, '/api/auth/change-initial-password', {
-		method: 'POST',
-		body: { currentPassword: created.temporaryPassword, newPassword: 'ChosenByClient!2026' },
-	});
-	check('client completes forced password change', r.ok, `redirect ${r.data?.redirect}`);
+	const N = await login(email, chosen);
+	check('activated client can log in with chosen password', N.user?.role === 'CLIENT', N.user?.email);
 
 	// the new tenant now sees only its own project
 	r = await call(N.j, '/api/portal/projects');
@@ -239,20 +269,26 @@ async function main() {
 	r = await call(N.j, '/api/portal/projects');
 	check('suspended client session is dead', r.status === 401, `HTTP ${r.status}`);
 
-	// They changed their password above, so use the chosen one here.
-	const denied = await call(jar(), '/api/auth/login', { method: 'POST', body: { email, password: 'ChosenByClient!2026' } });
+	const denied = await call(jar(), '/api/auth/login', { method: 'POST', body: { email, password: chosen } });
 	check('suspended client cannot log back in', denied.status === 403, `HTTP ${denied.status}`);
 
-	// reset access issues a new temp password and kills sessions
+	// reset access locks the account and issues a fresh invitation
 	r = await call(O.j, `/api/admin/clients/${created.organization.id}`, { method: 'PATCH', body: { status: 'ACTIVE' } });
 	check('owner reactivates client', r.ok, r.data?.organization?.status);
 
 	r = await call(O.j, `/api/admin/clients/${created.organization.id}/reset-access`, { method: 'POST' });
 	const reset = r.data;
-	check('owner resets client access', r.ok && !!reset?.temporaryPassword, reset?.email);
-
-	const R = await login(email, reset.temporaryPassword);
-	check('client logs in with reset password', R.user?.email === email, R.user?.email);
+	check('owner resets client access → new invitation', r.ok && !!reset?.invitation, reset?.email);
+	check('reset response carries no credential', !JSON.stringify(reset ?? {}).match(/temporaryPassword|password"/), '');
+	r = await call(jar(), '/api/auth/login', { method: 'POST', body: { email, password: chosen } });
+	check('previous password no longer works after reset', r.status === 401, `HTTP ${r.status}`);
+	const resetToken = reset?.invitation?.setupLink ? tokenFromLink(reset.invitation.setupLink) : null;
+	r = await call(jar(), '/api/auth/reset-password', { method: 'POST', body: { token: setupToken ?? 'x', password: 'Reused!Password2026' } });
+	check('old invitation token cannot be replayed', r.status === 400, `HTTP ${r.status}`);
+	r = await call(jar(), '/api/auth/reset-password', { method: 'POST', body: { token: resetToken ?? 'x', password: 'AfterReset!2026' } });
+	check('client activates again with the new token', r.ok, `HTTP ${r.status}`);
+	const R = await login(email, 'AfterReset!2026');
+	check('client logs in after access reset', R.user?.email === email, R.user?.email);
 
 	// ---------------------------------------------------- logout
 	console.log(`\n${'='.repeat(104)}\nSESSION LIFECYCLE\n${'='.repeat(104)}`);
