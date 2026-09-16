@@ -1,19 +1,18 @@
 /**
- * Local development seed.
+ * LOCAL DEVELOPMENT SEED — never run against production.
  *
- * Creates one OWNER and two isolated CLIENT tenants used by the security
- * matrix. Passwords here are local throwaways — never reuse in production.
+ * Creates one OWNER and two isolated CLIENT tenants used by the HTTP test
+ * matrices. Credentials come from scripts/lib/dev-fixtures.mjs and are local
+ * throwaways. Production gets its first owner from `pnpm bootstrap:owner`.
  *
- *   node prisma/seed.mjs
+ *   pnpm db:seed
  */
 import { PrismaClient } from '@prisma/client';
 import { hash } from '@node-rs/argon2';
+import { OWNER, CLIENT_A, CLIENT_B, assertNotProduction } from '../scripts/lib/dev-fixtures.mjs';
 
+assertNotProduction('The development seed');
 const prisma = new PrismaClient();
-
-const OWNER = { email: 'owner@eiretech360.com', password: 'OwnerLocal!2026' };
-const CLIENT_A = { email: 'clienta@example.com', password: 'ClientALocal!2026' };
-const CLIENT_B = { email: 'clientb@example.com', password: 'ClientBLocal!2026' };
 
 async function upsertOwner() {
 	const existing = await prisma.user.findUnique({ where: { email: OWNER.email } });
@@ -68,19 +67,19 @@ async function upsertTenant({ orgName, email, password, firstName, projectName, 
 
 const owner = await upsertOwner();
 const a = await upsertTenant({
-	orgName: 'Client A Ltd',
+	orgName: CLIENT_A.organizationName,
 	email: CLIENT_A.email,
 	password: CLIENT_A.password,
 	firstName: 'ClientA',
-	projectName: 'Project Alpha',
+	projectName: CLIENT_A.projectName,
 	stage: 'DEVELOPMENT',
 });
 const b = await upsertTenant({
-	orgName: 'Client B Ltd',
+	orgName: CLIENT_B.organizationName,
 	email: CLIENT_B.email,
 	password: CLIENT_B.password,
 	firstName: 'ClientB',
-	projectName: 'Project Beta',
+	projectName: CLIENT_B.projectName,
 	stage: 'DESIGN',
 });
 
