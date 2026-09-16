@@ -1,10 +1,12 @@
 import { prisma } from '~~/server/utils/prisma';
 import { requireClient } from '~~/server/utils/auth';
 import { storage, validateUpload } from '~~/server/services/storage';
+import { enforceRateLimit } from '~~/server/utils/rate-limit-h3';
 import { recordAudit } from '~~/server/services/audit';
 
 export default defineEventHandler(async (event) => {
 	const user = await requireClient(event);
+	enforceRateLimit(event, 'uploadPerUser', user.id);
 	const id = getRouterParam(event, 'id');
 	if (!id) throw createError({ statusCode: 400, statusMessage: 'Missing change request id' });
 
@@ -18,8 +20,7 @@ export default defineEventHandler(async (event) => {
 	const filePart = parts?.find((p) => p.name === 'file' && p.filename);
 	if (!filePart) throw createError({ statusCode: 400, statusMessage: 'No file received' });
 
-	const mimeType = filePart.type ?? 'application/octet-stream';
-	validateUpload(mimeType, filePart.data.byteLength);
+	const { originalName, mimeType } = validateUpload(filePart);
 	const stored = await storage.put(filePart.data, { organizationId: user.organizationId });
 
 	const attachment = await prisma.changeRequestAttachment.create({
@@ -27,7 +28,7 @@ export default defineEventHandler(async (event) => {
 			changeRequestId: cr.id,
 			organizationId: user.organizationId,
 			storageKey: stored.storageKey,
-			originalName: filePart.filename!.slice(0, 255),
+			originalName,
 			mimeType,
 			sizeBytes: stored.sizeBytes,
 			uploadedById: user.id,

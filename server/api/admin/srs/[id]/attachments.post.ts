@@ -1,12 +1,14 @@
 import { prisma } from '~~/server/utils/prisma';
 import { requireOwner } from '~~/server/utils/auth';
 import { storage, validateUpload } from '~~/server/services/storage';
+import { enforceRateLimit } from '~~/server/utils/rate-limit-h3';
 import { assertNotLocked } from '~~/server/services/srs';
 import { recordAudit } from '~~/server/services/audit';
 
 /** Owner uploads a prepared SRS (PDF/DOCX) or supporting material. */
 export default defineEventHandler(async (event) => {
 	const owner = await requireOwner(event);
+	enforceRateLimit(event, 'uploadPerUser', owner.id);
 	const id = getRouterParam(event, 'id');
 	if (!id) throw createError({ statusCode: 400, statusMessage: 'Missing document id' });
 
@@ -18,8 +20,7 @@ export default defineEventHandler(async (event) => {
 	const filePart = parts?.find((p) => p.name === 'file' && p.filename);
 	if (!filePart) throw createError({ statusCode: 400, statusMessage: 'No file received' });
 
-	const mimeType = filePart.type ?? 'application/octet-stream';
-	validateUpload(mimeType, filePart.data.byteLength);
+	const { originalName, mimeType } = validateUpload(filePart);
 
 	const stored = await storage.put(filePart.data, { organizationId: doc.organizationId });
 
@@ -28,7 +29,7 @@ export default defineEventHandler(async (event) => {
 			srsDocumentId: doc.id,
 			organizationId: doc.organizationId,
 			storageKey: stored.storageKey,
-			originalName: filePart.filename!.slice(0, 255),
+			originalName,
 			mimeType,
 			sizeBytes: stored.sizeBytes,
 			uploadedById: owner.id,

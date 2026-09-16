@@ -1,6 +1,6 @@
 import { prisma } from '~~/server/utils/prisma';
 import { requireUser } from '~~/server/utils/auth';
-import { storage } from '~~/server/services/storage';
+import { storage, contentDisposition } from '~~/server/services/storage';
 
 /**
  * Authorised download. There is no public URL for an upload — bytes only ever
@@ -15,10 +15,7 @@ export default defineEventHandler(async (event) => {
 	if (!id) throw createError({ statusCode: 400, statusMessage: 'Missing file id' });
 
 	const file = await prisma.scopeFile.findFirst({
-		where:
-			user.role === 'OWNER'
-				? { id }
-				: { id, organizationId: user.organizationId ?? '__none__' },
+		where: user.role === 'OWNER' ? { id } : { id, organizationId: user.organizationId ?? '__none__' },
 	});
 
 	if (!file) throw createError({ statusCode: 404, statusMessage: 'File not found' });
@@ -30,7 +27,7 @@ export default defineEventHandler(async (event) => {
 	setHeader(event, 'Content-Length', file.sizeBytes);
 	// `attachment` + a quoted name keeps the original filename without letting
 	// it influence the stored path.
-	setHeader(event, 'Content-Disposition', `attachment; filename="${file.originalName.replace(/"/g, '')}"`);
+	setHeader(event, 'Content-Disposition', contentDisposition(file.originalName));
 	setHeader(event, 'X-Content-Type-Options', 'nosniff');
 	setHeader(event, 'Cache-Control', 'private, no-store');
 

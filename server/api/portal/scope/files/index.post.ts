@@ -1,11 +1,13 @@
 import { prisma } from '~~/server/utils/prisma';
 import { requireClient } from '~~/server/utils/auth';
 import { storage, validateUpload } from '~~/server/services/storage';
+import { enforceRateLimit } from '~~/server/utils/rate-limit-h3';
 import { recordAudit } from '~~/server/services/audit';
 import { ensureClientScope, CLIENT_EDITABLE } from '~~/server/services/scope';
 
 export default defineEventHandler(async (event) => {
 	const user = await requireClient(event);
+	enforceRateLimit(event, 'uploadPerUser', user.id);
 	const scope = await ensureClientScope(event, user.organizationId, user.id);
 
 	if (!CLIENT_EDITABLE.includes(scope.status)) {
@@ -20,8 +22,7 @@ export default defineEventHandler(async (event) => {
 
 	const field = (name: string) => parts.find((p) => p.name === name)?.data?.toString() ?? null;
 
-	const mimeType = filePart.type ?? 'application/octet-stream';
-	validateUpload(mimeType, filePart.data.byteLength);
+	const { originalName, mimeType } = validateUpload(filePart);
 
 	const stored = await storage.put(filePart.data, { organizationId: user.organizationId });
 
@@ -30,7 +31,7 @@ export default defineEventHandler(async (event) => {
 			scopeId: scope.id,
 			organizationId: user.organizationId,
 			storageKey: stored.storageKey,
-			originalName: filePart.filename!.slice(0, 255),
+			originalName,
 			mimeType,
 			sizeBytes: stored.sizeBytes,
 			sectionKey: field('sectionKey'),

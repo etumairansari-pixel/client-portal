@@ -1,6 +1,6 @@
 import { prisma } from '~~/server/utils/prisma';
 import { requireUser } from '~~/server/utils/auth';
-import { storage } from '~~/server/services/storage';
+import { storage, contentDisposition } from '~~/server/services/storage';
 
 /** Authorised download. Owner: any. Client: own organization only, else 404. */
 export default defineEventHandler(async (event) => {
@@ -18,7 +18,7 @@ export default defineEventHandler(async (event) => {
 
 	setHeader(event, 'Content-Type', attachment.mimeType);
 	setHeader(event, 'Content-Length', attachment.sizeBytes);
-	setHeader(event, 'Content-Disposition', `attachment; filename="${attachment.originalName.replace(/"/g, '')}"`);
+	setHeader(event, 'Content-Disposition', contentDisposition(attachment.originalName));
 	setHeader(event, 'X-Content-Type-Options', 'nosniff');
 	setHeader(event, 'Cache-Control', 'private, no-store');
 	return data;
